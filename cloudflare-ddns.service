@@ -1,0 +1,9 @@
+[Unit]
+Description=Cloudflare DDNS Update
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/benjamin/256/ddns.sh
+WorkingDirectory=/home/benjamin/256
+EnvironmentFile=/home/benjamin/256/.env
