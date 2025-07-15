@@ -1,0 +1,6 @@
+[Unit]
+Description=Put the monitor to sleep and turn off RGB
+
+[Service]
+Type=oneshot
+ExecStart=/home/benjamin/256/bedtime-mode.sh

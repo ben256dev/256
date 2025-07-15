@@ -1,0 +1,6 @@
+[Unit]
+Description=Wake up the monitor and reset RGB
+
+[Service]
+Type=oneshot
+ExecStart=/home/benjamin/256/morning-wakeup.sh
