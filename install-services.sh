@@ -1,8 +1,11 @@
 #!/bin/bash
 set -e
 
-echo "Installing bulb-set → /usr/local/bin"
-sudo ln -sf /home/benjamin/256/bulb-set.py /usr/local/bin/bulb-set
+echo "Installing Aliases"
+sudo cp .env /etc/256.env
+
+echo "Installing bulb-set /usr/local/bin"
+sudo ln -sf "$(pwd)/bulb-set.py" /usr/local/bin/bulb-set
 
 echo "Copying .service and .timer units..."
 sudo cp sleep-monitor.{service,timer} wakeup-monitor.{service,timer} /etc/systemd/system/

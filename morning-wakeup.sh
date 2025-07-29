@@ -1,18 +1,15 @@
 #!/bin/bash
 set -e
 
-BULB_IPS="192.168.0.97 192.168.0.98"
+source /etc/256.env
 
-echo "Stage 1"
-bulb-set $BULB_IPS --brightness 10 --temp 3000
+bulb-set $BULB_BEDROOM --brightness 5 --temp 2200
 sleep 900
 
-echo "Stage 2"
-bulb-set $BULB_IPS --brightness 50 --temp 4000
+bulb-set $BULB_BEDROOM --brightness 25 --temp 3000
 sleep 900
 
-echo "Stage 3"
-bulb-set $BULB_IPS --brightness 100 --temp 5000
+bulb-set $BULB_BEDROOM $BULB_OFFICE --brightness 100 --temp 5000
 
 export DISPLAY=:0
 export XAUTHORITY=/home/benjamin/.Xauthority
