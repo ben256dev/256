@@ -1,5 +1,5 @@
 [Unit]
-Description=Put the monitor to sleep and turn off RGB
+Description=Put the monitor to sleep and turn off RGB. Also handle bedtime routine for smart bulbs.
 
 [Service]
 Type=oneshot

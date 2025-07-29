@@ -1,9 +1,10 @@
 [Unit]
-Description=Run bedtime-mode at midnight
+Description=Run bedtime-mode at 8 PM (2 hours before bedtime)
 
 [Timer]
-OnCalendar=*-*-* 00:00:00
+OnCalendar=*-*-* 20:00:00
 Persistent=true
+AccuracySec=1m
 
 [Install]
 WantedBy=timers.target

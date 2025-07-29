@@ -174,126 +174,48 @@ sudo sed -i 's/^#\?PrintLastLog.*/PrintLastLog no/' /etc/ssh/sshd_config
 sudo systemctl restart ssh
 ```
 
-## Power / Screen Blanking Fix
+## Sleep & Wake Monitor Automation
 
-I later decided I don't want idling to ever cause my screen to go blank. So we previously added the following to ``~/.xinitc``:
+We disable idle screen blanking using this in `~/.xinitrc`:
 
 ```bash
 xset s off; xset -dpms; xset s noblank
 ```
-
-To manually put the screen to sleep we simply use the following command:
+To manually blank or wake the screen:
 
 ```bash
-xset dpms force off
+xset dpms force off      # Sleep monitor
+xset dpms force on       # Wake monitor
 ```
+To run these automatically, we created two scripts:
 
-Perhaps we could improve this so that late at night idle-sleep is enabled and in the morning it is automatically woken up again. This could be particularly helpful for a calendar display.
-
-We have a command to put the monitor to sleep, but what about waking it up? To do that we have to execute a command inside of X11 to simulate a keyboard input. We will use ``xdotool`` for this.
-
-```bash
-sudo apt install xdotool
-```
-
-As an example, lets put the monitor to sleep and then wake it up after 10 seconds.
+## bedtime-mode.sh
+Puts the monitor to sleep and turns RGB lights off.
 
 ```bash
-xset dpms force off; sleep 10; xset dpms force on
-```
-
-Lets make another systemd timer and service:
-
-```bash
-vim bedtime-mode.sh
-chmod +x bedtime-mode.sh
-```
-
-```bash
-# bedtime-mode.sh
 #!/bin/bash
 export DISPLAY=:0
 export XAUTHORITY=/home/benjamin/.Xauthority
 xset dpms force off
 openrgb --device 0 --color 000000
 ```
+## morning-wakeup.sh
+Wakes the monitor and resets RGB color.
 
 ```bash
-vim morning-wakeup.sh
-chmod +x morning-wakeup.sh
-```
-
-```bash
-# morning-wakeup.sh
 #!/bin/bash
 export DISPLAY=:0
 export XAUTHORITY=/home/benjamin/.Xauthority
 xset dpms force on
 openrgb --device 0 --color 0044FF
 ```
+## Timers
 
-The use of ``DISPLAY`` and ``XAUTHORITY`` are important for running X11 commands through ssh or in a service.
+- `sleep-monitor.timer`: runs nightly at midnight
+- `wakeup-monitor.timer`: runs every morning at 9:00 AM
 
-```bash
-vim sleep-monitor.service
-vim sleep-monitor.timer
-```
-
-```bash
-# sleep-monitor.service
-[Unit]
-Description=Put the monitor to sleep and turn off RGB
-
-[Service]
-Type=oneshot
-ExecStart=/home/benjamin/256/bedtime-mode.sh
-```
+To install and restart everything, run:
 
 ```bash
-# sleep-monitor.timer
-[Unit]
-Description=Run bedtime-mode at midnight
-
-[Timer]
-OnCalendar=*-*-* 00:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-```bash
-vim wakeup-monitor.service
-vim wakeup-monitor.timer
-```
-
-```bash
-# wakeup-monitor.service
-[Unit]
-Description=Wake up the monitor and reset RGB
-
-[Service]
-Type=oneshot
-ExecStart=/home/benjamin/256/morning-wakeup.sh
-```
-
-```bash
-# wakeup-monitor.timer
-[Unit]
-Description=Run wakeup script at 9AM
-
-[Timer]
-OnCalendar=*-*-* 09:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-```bash
-sudo cp *.timer *.service /etc/systemd/system/.
-sudo systemctl daemon-reexec
-sudo systemctl enable --now sleep-monitor.timer
-sudo systemctl enable --now wakeup-monitor.timer
-systemctl list-timers | grep 'sleep-monitor\|wakeup-monitor'
+./install-services.sh
 ```

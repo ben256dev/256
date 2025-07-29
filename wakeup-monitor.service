@@ -1,5 +1,5 @@
 [Unit]
-Description=Wake up the monitor and reset RGB
+Description=Wake up the monitor and reset RGB. Also handle sunrise routine for bulbs.
 
 [Service]
 Type=oneshot
