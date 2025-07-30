@@ -1,7 +1,9 @@
 #!/bin/bash
 set -e
 
+set -a
 source /etc/256.env
+set +a
 
 bulb-set $BULB_BEDROOM --brightness 5 --temp 2200
 sleep 900

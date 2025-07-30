@@ -4,3 +4,4 @@ Description=Wake up the monitor and reset RGB. Also handle sunrise routine for b
 [Service]
 Type=oneshot
 ExecStart=/home/benjamin/256/morning-wakeup.sh
+EnvironmentFile=/home/benjamin/256/.env

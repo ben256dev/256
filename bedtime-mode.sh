@@ -1,7 +1,9 @@
 #!/bin/bash
 set -e
 
+set -a
 source /etc/256.env
+set +a
 
 bulb-set $BULB_OFFICE $BULB_BEDROOM --brightness 50 --temp 2700
 sleep 3600  # 1 hour
@@ -12,7 +14,6 @@ sleep 2700  # 45 minutes
 bulb-set $BULB_OFFICE $BULB_BEDROOM --brightness 45 --color ffaa00
 sleep 900   # 15 minutes
 
-echo "Stage 4: Lights out"
 export DISPLAY=:0
 export XAUTHORITY=/home/benjamin/.Xauthority
 /usr/bin/xset dpms force off

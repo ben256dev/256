@@ -4,3 +4,4 @@ Description=Put the monitor to sleep and turn off RGB. Also handle bedtime routi
 [Service]
 Type=oneshot
 ExecStart=/home/benjamin/256/bedtime-mode.sh
+EnvironmentFile=/home/benjamin/256/.env
