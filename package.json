@@ -1,0 +1,26 @@
+{
+  "name": "256",
+  "version": "1.0.0",
+  "description": "## Improving The Basic Console",
+  "main": "ecosystem.config.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ben256dev/256.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ben256dev/256/issues"
+  },
+  "homepage": "https://github.com/ben256dev/256#readme",
+  "dependencies": {
+    "@pm2/io": "^6.1.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "serve-index": "^1.9.1"
+  }
+}

@@ -176,46 +176,119 @@ sudo systemctl restart ssh
 
 ## Sleep & Wake Monitor Automation
 
-We disable idle screen blanking using this in `~/.xinitrc`:
+We disable idle screen blanking in `~/.xinitrc`:
 
 ```bash
 xset s off; xset -dpms; xset s noblank
 ```
-To manually blank or wake the screen:
+
+To manually control the monitor state:
 
 ```bash
 xset dpms force off      # Sleep monitor
 xset dpms force on       # Wake monitor
 ```
-To run these automatically, we created two scripts:
 
-## bedtime-mode.sh
-Puts the monitor to sleep and turns RGB lights off.
+---
+
+## Bedtime & Morning Routines
+
+Two scripts automate the monitor state and smart bulb behavior.
+
+### `bedtime.sh`
+
+- Gradually dims bulbs before bed
+- Turns off monitor and RGB lights
 
 ```bash
 #!/bin/bash
+set -e
+set -a
+source /etc/256.env
+set +a
+
+bulb-set $BULB_OFFICE $BULB_BEDROOM --brightness 50 --temp 2700
+sleep 3600
+bulb-set $BULB_OFFICE $BULB_BEDROOM --brightness 60 --color ffaa00
+sleep 2700
+bulb-set $BULB_OFFICE $BULB_BEDROOM --brightness 45 --color ffaa00
+sleep 900
+
 export DISPLAY=:0
 export XAUTHORITY=/home/benjamin/.Xauthority
 xset dpms force off
 openrgb --device 0 --color 000000
+bulb-set $BULB_OFFICE $BULB_BEDROOM --off
 ```
-## morning-wakeup.sh
-Wakes the monitor and resets RGB color.
+
+### `morning.sh`
+
+- Gradually brightens bedroom light
+- Wakes monitor and sets RGB color
 
 ```bash
 #!/bin/bash
+set -e
+set -a
+source /etc/256.env
+set +a
+
+bulb-set $BULB_BEDROOM --brightness 5 --temp 2500
+sleep 900
+bulb-set $BULB_BEDROOM --brightness 25 --temp 3000
+sleep 900
+bulb-set $BULB_BEDROOM $BULB_OFFICE --brightness 100 --temp 5000
+
 export DISPLAY=:0
 export XAUTHORITY=/home/benjamin/.Xauthority
 xset dpms force on
 openrgb --device 0 --color 0044FF
 ```
-## Timers
 
-- `sleep-monitor.timer`: runs nightly at midnight
-- `wakeup-monitor.timer`: runs every morning at 9:00 AM
+---
 
-To install and restart everything, run:
+## Serving OBS Output Directory
+
+Run the obs_server.config.js with pm2
 
 ```bash
-./install-services.sh
+pm2 start obs_server.config.js
 ```
+
+Ask the process for a url with url key
+
+```bash
+pm2 trigger obs_server url
+```
+
+The url key is generated via [sht](https://github.com/ben256dev/sht) utility. It will generate a lengthy url-compliant base64 digest based on a merkle tree of the files in the obs output directory.
+
+Restart the process after recording new footage to invalidate the old url
+
+```bash
+pm2 restart obs_server
+pm2 trigger obs_server url #get the new url
+```
+
+## Timers
+
+| Timer            | Time     | Action                         |
+|------------------|----------|--------------------------------|
+| `bedtime.timer`  | 8:00 PM  | Starts bedtime routine         |
+| `morning.timer`  | 7:30 AM  | Starts morning routine         |
+
+---
+
+## Install Everything
+
+```bash
+./install.sh
+```
+
+This will:
+
+- Copy `.env` to `/etc/256.env`
+- Symlink `bulb-set.py` to `/usr/local/bin/bulb-set`
+- Install `.service` and `.timer` units
+- Reload and enable the timer units
+
