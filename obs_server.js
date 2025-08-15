@@ -1,17 +1,16 @@
 #!/usr/bin/env node
 /* eslint-disable */
 const { execFileSync } = require("child_process");
-const fs = require("fs").promises;
+const fs = require("fs");
+const fsp = fs.promises;
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const io = require("@pm2/io");
 
-// -------- Config --------
 const OBS_DIR = process.env.OBS_DIR || ".";
 const PORT = Number(process.env.PORT || 8000);
-// Empty string/undefined => all interfaces. Set HOST=127.0.0.1 to bind localhost only.
-const HOST = process.env.HOST ?? "";
+const HOST = "0.0.0.0";
 const FINGERPRINT_CMD = process.env.FINGERPRINT_CMD;
 
 if (!FINGERPRINT_CMD) {
@@ -19,8 +18,6 @@ if (!FINGERPRINT_CMD) {
     process.exit(1);
 }
 
-// -------- Secret key --------
-// Allow commands with args by using shell, since the caller controls the env.
 let key;
 try {
     key = execFileSync(FINGERPRINT_CMD, { encoding: "utf8", shell: true }).trim();
@@ -28,82 +25,96 @@ try {
     console.error("Failed to execute FINGERPRINT_CMD:", err);
     process.exit(1);
 }
-
 key = key.replace(/[^A-Za-z0-9._-]/g, "");
 if (!key) {
     console.error("FINGERPRINT_CMD produced an empty or invalid key");
     process.exit(1);
 }
 
-// -------- App --------
 const app = express();
 app.disable("x-powered-by");
 
 const root = path.resolve(OBS_DIR);
 const mount = `/${key}`;
 const staticMount = `${mount}/`;
+const template = fs.readFileSync(path.join(__dirname, "views", "index.html"), "utf8");
 
-// CORS only under the secret path
 app.use(staticMount, cors());
 
-// Escape helper for safe regex construction
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const hiddenGuard = (req, res, next) => {
+    if (req.path.split("/").some((p) => p && p.startsWith("."))) return res.status(404).end();
+    next();
+};
+const safeJoin = (base, sub) => {
+    const p = path.normalize("/" + (sub || ""));
+    const abs = path.join(base, p);
+    if (!abs.startsWith(base)) return null;
+    return abs;
+};
+const makeBreadcrumbs = (subpath) => {
+    const parts = subpath ? subpath.split("/").filter(Boolean) : [];
+    const crumbs = [];
+    let acc = "";
+    crumbs.push(`<a href="${staticMount}">/</a>`);
+    for (let i = 0; i < parts.length; i++) {
+        acc += parts[i] + "/";
+        const href = staticMount + encodeURI(acc);
+        crumbs.push(`<a href="${href}">${parts[i]}/</a>`);
+    }
+    return crumbs.join(" ");
+};
 
-// Custom index for exact /<key> or /<key>/
-app.get(new RegExp(`^${esc(mount)}/?$`), async (_req, res) => {
+app.use(staticMount, hiddenGuard);
+
+app.get(new RegExp(`^${esc(mount)}(?:/(.*))?$`), async (req, res, next) => {
     try {
-        const items = await fs.readdir(root, { withFileTypes: true });
-        const files = items.filter((d) => d.isFile()).map((d) => d.name).sort();
-        const list = files
-            .map((f) => `<li><a href="${encodeURIComponent(f)}">${f}</a></li>`)
-            .join("");
+        const sub = req.params[0] || "";
+        if (sub.split("/").some((p) => p && p.startsWith("."))) return res.status(404).end();
+        const target = safeJoin(root, sub);
+        if (!target) return res.status(400).send("Bad path");
+        const st = await fsp.stat(target).catch(() => null);
+        if (!st) return res.status(404).send("Not Found");
+        if (!st.isDirectory()) return next();
 
-        res.type("html").send(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OBS Files</title>
-  <link rel="stylesheet" href="https://ben256.com/darkmode.css">
-  <style>
-    body{font:14px system-ui,sans-serif;margin:24px}
-    h1{margin-bottom:12px}
-    ul{list-style:none;padding:0}
-    li{margin:6px 0}
-    a{text-decoration:none}
-    .wrap{max-width:900px}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>OBS Files</h1>
-    <ul>${list}</ul>
-  </div>
-</body>
-</html>`);
+        const items = (await fsp.readdir(target, { withFileTypes: true })).filter((d) => !d.name.startsWith("."));
+        const dirs = items.filter((d) => d.isDirectory()).map((d) => d.name).sort();
+        const files = items.filter((d) => d.isFile()).map((d) => d.name).sort();
+        const prefix = sub ? encodeURI(sub.replace(/\/?$/, "/")) : "";
+        const listDirs = dirs.map((d) => {
+            const href = staticMount + prefix + encodeURIComponent(d) + "/";
+            return `<li class="dir"><a href="${href}">${d}/</a></li>`;
+        });
+        const listFiles = files.map((f) => {
+            const href = staticMount + prefix + encodeURIComponent(f);
+            return `<li class="file"><a href="${href}">${f}</a></li>`;
+        });
+        const list = listDirs.concat(listFiles).join("");
+        const html = template
+            .replace("%%TITLE%%", "OBS Files")
+            .replace("%%BREADCRUMBS%%", makeBreadcrumbs(sub))
+            .replace("%%LIST%%", list);
+        res.type("html").send(html);
     } catch (err) {
-        console.error("Failed to generate index page:", err);
+        console.error("index error:", err);
         res.status(500).send("Internal Server Error");
     }
 });
 
-// Static files under the secret mount
 app.use(
     staticMount,
     express.static(root, {
-        fallthrough: true,      // allow our index route above to handle /<key>/
+        fallthrough: true,
         etag: true,
-        immutable: true,        // only effective with maxAge > 0
+        immutable: true,
         maxAge: "1h",
         index: false
     })
 );
 
-// Catch-all 404 (kept last)
 app.all(/.*/, (_req, res) => res.status(404).end());
 
-// -------- Server --------
-const DISPLAY_HOST = HOST || "0.0.0.0";
+const DISPLAY_HOST = process.env.HOST;
 const url = `http://${DISPLAY_HOST}:${PORT}${staticMount}`;
 
 const server = app.listen(PORT, HOST || undefined, () => {
@@ -115,7 +126,6 @@ server.on("error", (err) => {
     process.exit(1);
 });
 
-// Crash guards
 process.on("unhandledRejection", (e) => {
     console.error("unhandledRejection", e);
     process.exit(1);
@@ -125,7 +135,6 @@ process.on("uncaughtException", (e) => {
     process.exit(1);
 });
 
-// PM2 action to retrieve the URL
 io.action("url", (reply) => {
     reply({ url });
 });
