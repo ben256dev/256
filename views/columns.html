@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OBS Files</title>
+    <link rel="stylesheet" href="https://ben256.com/darkmode.css">
+    <style>
+        body { font: 14px system-ui, sans-serif; margin: 24px }
+        h1 { margin: 0 0 12px }
+        .wrap { max-width: 1200px; margin: 0 auto }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 16px;
+        }
+        section { border: 1px solid var(--border, #333); padding: 12px; border-radius: 8px }
+        h2 { font-size: 15px; margin: 0 0 8px }
+        ul { list-style: none; padding: 0; margin: 0; max-height: 60vh; overflow: auto }
+        li { margin: 6px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+        a { text-decoration: none }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>OBS Files</h1>
+        <div class="grid">%%SECTIONS%%</div>
+    </div>
+</body>
+</html>
+

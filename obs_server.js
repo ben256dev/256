@@ -37,66 +37,83 @@ app.disable("x-powered-by");
 const root = path.resolve(OBS_DIR);
 const mount = `/${key}`;
 const staticMount = `${mount}/`;
-const template = fs.readFileSync(path.join(__dirname, "views", "index.html"), "utf8");
+
+const templatePath = path.join(__dirname, "views", "table.html");
 
 app.use(staticMount, cors());
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const hidden = (name) => name.startsWith(".");
 const hiddenGuard = (req, res, next) => {
     if (req.path.split("/").some((p) => p && p.startsWith("."))) return res.status(404).end();
     next();
 };
-const safeJoin = (base, sub) => {
-    const p = path.normalize("/" + (sub || ""));
-    const abs = path.join(base, p);
-    if (!abs.startsWith(base)) return null;
-    return abs;
-};
-const makeBreadcrumbs = (subpath) => {
-    const parts = subpath ? subpath.split("/").filter(Boolean) : [];
-    const crumbs = [];
-    let acc = "";
-    crumbs.push(`<a href="${staticMount}">/</a>`);
-    for (let i = 0; i < parts.length; i++) {
-        acc += parts[i] + "/";
-        const href = staticMount + encodeURI(acc);
-        crumbs.push(`<a href="${href}">${parts[i]}/</a>`);
+
+const walkFiles = async (base) => {
+    const out = [];
+    const stack = [{ abs: base, rel: "" }];
+    while (stack.length) {
+        const { abs, rel } = stack.pop();
+        const entries = await fsp.readdir(abs, { withFileTypes: true });
+        for (const d of entries) {
+            if (hidden(d.name)) continue;
+            const absChild = path.join(abs, d.name);
+            const relChild = rel ? `${rel}/${d.name}` : d.name;
+            if (d.isDirectory()) {
+                stack.push({ abs: absChild, rel: relChild });
+            } else if (d.isFile()) {
+                out.push(relChild);
+            }
+        }
     }
-    return crumbs.join(" ");
+    return out;
+};
+
+const categorize = (relPath) => {
+    const parts = relPath.split("/").filter(Boolean);
+    if (parts.length === 1) return "Uncategorized";
+    return parts[0];
+};
+
+const extOf = (filename) => {
+    const i = filename.lastIndexOf(".");
+    if (i <= 0 || i === filename.length - 1) return "";
+    return filename.slice(i + 1).toLowerCase();
 };
 
 app.use(staticMount, hiddenGuard);
 
-app.get(new RegExp(`^${esc(mount)}(?:/(.*))?$`), async (req, res, next) => {
+app.get(new RegExp(`^${esc(mount)}/?$`), async (_req, res) => {
     try {
-        const sub = req.params[0] || "";
-        if (sub.split("/").some((p) => p && p.startsWith("."))) return res.status(404).end();
-        const target = safeJoin(root, sub);
-        if (!target) return res.status(400).send("Bad path");
-        const st = await fsp.stat(target).catch(() => null);
-        if (!st) return res.status(404).send("Not Found");
-        if (!st.isDirectory()) return next();
-
-        const items = (await fsp.readdir(target, { withFileTypes: true })).filter((d) => !d.name.startsWith("."));
-        const dirs = items.filter((d) => d.isDirectory()).map((d) => d.name).sort();
-        const files = items.filter((d) => d.isFile()).map((d) => d.name).sort();
-        const prefix = sub ? encodeURI(sub.replace(/\/?$/, "/")) : "";
-        const listDirs = dirs.map((d) => {
-            const href = staticMount + prefix + encodeURIComponent(d) + "/";
-            return `<li class="dir"><a href="${href}">${d}/</a></li>`;
-        });
-        const listFiles = files.map((f) => {
-            const href = staticMount + prefix + encodeURIComponent(f);
-            return `<li class="file"><a href="${href}">${f}</a></li>`;
-        });
-        const list = listDirs.concat(listFiles).join("");
+        const files = await walkFiles(root);
+        const rows = [];
+        const exts = new Set();
+        for (const rel of files) {
+            const href = staticMount + rel.split("/").map(encodeURIComponent).join("/");
+            const name = rel.substring(rel.lastIndexOf("/") + 1);
+            const cat = categorize(rel);
+            const ext = extOf(name);
+            if (ext) exts.add(ext);
+            rows.push({ href, name, cat, ext });
+        }
+        rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+        const rowsHtml = rows.map(r => {
+            const e = r.ext || "";
+            return `<tr data-ext="${e}"><td><a href="${r.href}">${r.name}</a></td><td>${r.cat}</td></tr>`;
+        }).join("");
+        const extList = Array.from(exts).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+        const filtersHtml = extList.map(x => {
+            const id = `ext-${x.replace(/[^a-z0-9_-]/gi, "")}`;
+            const checked = x === "mkv" ? "" : " checked";
+            return `<label><input type="checkbox" class="ext-filter" id="${id}" value="${x}"${checked}> .${x}</label>`;
+        }).join(" ");
+        let template = await fsp.readFile(templatePath, "utf8");
         const html = template
-            .replace("%%TITLE%%", "OBS Files")
-            .replace("%%BREADCRUMBS%%", makeBreadcrumbs(sub))
-            .replace("%%LIST%%", list);
+            .replace("%%FILTERS%%", filtersHtml || "")
+            .replace("%%ROWS%%", rowsHtml || "<tr><td colspan='2'>No files found.</td></tr>");
         res.type("html").send(html);
     } catch (err) {
-        console.error("index error:", err);
+        console.error("table index error:", err);
         res.status(500).send("Internal Server Error");
     }
 });
