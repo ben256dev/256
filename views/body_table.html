@@ -1,0 +1,72 @@
+<h1>OBS Files</h1>
+<div class="filters" id="filters">%%FILTERS%%</div>
+<div class="table-wrap">
+    <table id="fileTable">
+        <thead>
+            <tr>
+                <th data-sort="thumb">Thumb</th>
+                <th data-sort="name">Name</th>
+                <th data-sort="game">Game</th>
+                <th data-sort="duration">Duration</th>
+                <th class="optional" data-sort="resolution">Resolution</th>
+                <th class="optional" data-sort="fps">FPS</th>
+                <th data-sort="size">Size</th>
+                <th data-sort="mtime">Modified</th>
+            </tr>
+        </thead>
+        <tbody>
+            %%ROWS%%
+        </tbody>
+    </table>
+</div>
+<style>
+:root { --border: #333 }
+.table-wrap { width: 100%; overflow-x: auto }
+table { border-collapse: collapse; width: 100%; table-layout: auto }
+th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+th { cursor: pointer; text-align: left }
+a { text-decoration: none }
+tr:hover { background: rgba(255,255,255,0.05) }
+.thumb { display: block; max-width: 180px; max-height: 100px; object-fit: cover; border-radius: 6px }
+.thumb-cell { width: 200px }
+@media (max-width: 1100px) {
+    .thumb { max-width: 120px; max-height: 80px }
+    .thumb-cell { width: 140px }
+}
+@media (max-width: 800px) {
+    .optional { display: none }
+}
+</style>
+<script>
+const applyFilter = () => {
+    const checks = Array.from(document.querySelectorAll(".ext-filter"));
+    const allowed = new Set(checks.filter(c => c.checked).map(c => c.value));
+    const rows = document.querySelectorAll("#fileTable tbody tr");
+    rows.forEach(r => {
+        const ext = r.getAttribute("data-ext") || "";
+        r.style.display = (allowed.size === 0 || (ext && allowed.has(ext))) ? "" : "none";
+    });
+};
+document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("filters").addEventListener("change", applyFilter);
+    applyFilter();
+    document.querySelectorAll("th[data-sort]").forEach(th => {
+        th.addEventListener("click", () => {
+            const tbody = th.closest("table").querySelector("tbody");
+            const rows = Array.from(tbody.querySelectorAll("tr"));
+            const idx = Array.from(th.parentNode.children).indexOf(th);
+            const asc = !th.classList.contains("asc");
+            rows.sort((a, b) => {
+                const va = (a.children[idx].textContent || "").trim().toLowerCase();
+                const vb = (b.children[idx].textContent || "").trim().toLowerCase();
+                return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+            });
+            tbody.innerHTML = "";
+            rows.forEach(r => tbody.appendChild(r));
+            th.classList.toggle("asc", asc);
+            th.classList.toggle("desc", !asc);
+        });
+    });
+});
+</script>
+
