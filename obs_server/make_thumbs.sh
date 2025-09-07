@@ -11,7 +11,19 @@ REMUX_STILL_WRITING_MARGIN_SEC="${REMUX_STILL_WRITING_MARGIN_SEC:-60}"
 root_abs="$(readlink -f "$ROOT")"
 now_ts="$(date +%s)"
 
-find "$root_abs" -type f -iname '*.mkv' | while IFS= read -r mkv; do
+find_mkvs() {
+    find "$root_abs" \
+        -type d \( -name '.mkv_originals' -o -name '.sht' -o -name '.*' \) -prune -o \
+        -type f -iname '*.mkv' -print
+}
+
+find_mp4s() {
+    find "$root_abs" \
+        -type d \( -name '.mkv_originals' -o -name '.sht' -o -name '.*' \) -prune -o \
+        -type f -iname '*.mp4' -print
+}
+
+find_mkvs | while IFS= read -r mkv; do
     mtime="$(stat -c %Y "$mkv" || echo 0)"
     age="$(( now_ts - mtime ))"
     if [ "$age" -lt "$REMUX_STILL_WRITING_MARGIN_SEC" ]; then
@@ -33,8 +45,8 @@ find "$root_abs" -type f -iname '*.mkv' | while IFS= read -r mkv; do
             else
                 bakdir="$dir/.mkv_originals"
                 mkdir -p "$bakdir"
-                mv -f "$mkv" "$bakdir/$base"
-                echo "remux-backup: $mkv -> $bakdir/$base" | tee -a "$LOG_FILE"
+                mv -f "$mkv" "$bakdir/$(basename "$mkv")"
+                echo "remux-backup: $mkv -> $bakdir/$(basename "$mkv")" | tee -a "$LOG_FILE"
             fi
         else
             echo "remux-fail: $mkv" | tee -a "$LOG_FILE"
@@ -42,7 +54,7 @@ find "$root_abs" -type f -iname '*.mkv' | while IFS= read -r mkv; do
     fi
 done
 
-find "$root_abs" -type f -iname '*.mp4' | while IFS= read -r video; do
+find_mp4s | while IFS= read -r video; do
     dir="$(dirname "$video")"
     base="$(basename "$video")"
     name="${base%.*}"

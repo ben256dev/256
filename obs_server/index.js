@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable */
 const { execFileSync, execFile } = require("child_process");
 const fs = require("fs");
 const fsp = fs.promises;
@@ -85,7 +84,7 @@ const extOf = (filename) => {
 
 const hasFile = async (absPath) => {
     try {
-        await fsp.access(absPath, fs.constants.R_OK);
+        await fsp.access(absPath, fs.constants.ROK);
         return true;
     } catch {
         return false;
@@ -198,15 +197,16 @@ const fetchTemplate = (url) =>
         }).on("error", reject);
     });
 
-const renderWithTemplate = async (bodyHtml, title, cssUrl, footerHtml) => {
+const renderWithTemplate = async (bodyHtml, title, cssUrl, footerHtml, baseHref) => {
     const tpl = await fetchTemplate("https://ben256.com/template.html");
     const ifCssRe = /\$if\(css\)\$[\s\S]*?\$endif\$/g;
-    return tpl
-        .replace(ifCssRe, `<link rel="stylesheet" href="${cssUrl}">`)
+    let out = tpl.replace(ifCssRe, `<link rel="stylesheet" href="${cssUrl}">`)
         .replace(/\$title\$/g, title || "")
         .replace(/\$css\$/g, cssUrl || "")
         .replace(/\$body\$/g, bodyHtml || "")
         .replace(/\$footer-content\$/g, footerHtml || "");
+    out = out.replace(/<head>/i, `<head><base href="${baseHref || "/"}">`);
+    return out;
 };
 
 app.use(staticMount, hiddenGuard);
@@ -218,7 +218,9 @@ app.get(new RegExp(`^${esc(mount)}/?$`), async (_req, res) => {
         const rows = [];
         const tasks = files.map(async (rel) => {
             const name = rel.substring(rel.lastIndexOf("/") + 1);
-            const href = staticMount + rel.split("/").map(encodeURIComponent).join("/");
+            const hrefPath = rel.split("/").map(encodeURIComponent).join("/");
+            let href = `${staticMount}${hrefPath}`;
+            if (!href.startsWith("/")) href = `/${href}`;
             const cat = categorize(rel);
             const ext = extOf(name);
             if (ext) exts.add(ext);
@@ -234,7 +236,9 @@ app.get(new RegExp(`^${esc(mount)}/?$`), async (_req, res) => {
                 const thumbRel = rel.replace(/\.[^/.]+$/, ".jpg");
                 const absThumb = path.join(root, thumbRel);
                 if (await hasFile(absThumb)) {
-                    thumbHref = staticMount + thumbRel.split("/").map(encodeURIComponent).join("/");
+                    const thumbPath = thumbRel.split("/").map(encodeURIComponent).join("/");
+                    thumbHref = `${staticMount}${thumbPath}`;
+                    if (!thumbHref.startsWith("/")) thumbHref = `/${thumbHref}`;
                 }
             }
             let duration = "";
@@ -280,13 +284,34 @@ app.get(new RegExp(`^${esc(mount)}/?$`), async (_req, res) => {
             return `<label><input type="checkbox" class="ext-filter" id="${id}" value="${x}"${checked}> .${x}</label>`;
         }).join(" ");
         const bodyHtml = bodyTpl.replace("%%FILTERS%%", filtersHtml || "").replace("%%ROWS%%", rowsHtml || "<tr><td colspan='8'>No files found.</td></tr>");
-        const page = await renderWithTemplate(bodyHtml, "OBS Files", CSS_URL, "");
+        const page = await renderWithTemplate(bodyHtml, "OBS Files", CSS_URL, "", staticMount);
         res.type("html").send(page);
     } catch (err) {
         console.error("table index error:", err);
         res.status(500).send("Internal Server Error");
     }
 });
+
+const MIME_MAP = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mov": "video/mp4",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".css": "text/css",
+    ".js": "application/javascript",
+    ".html": "text/html"
+};
 
 app.use(
     staticMount,
@@ -295,7 +320,14 @@ app.use(
         etag: true,
         immutable: true,
         maxAge: "1h",
-        index: false
+        index: false,
+        setHeaders: (res, filePath) => {
+            const ext = path.extname(filePath).toLowerCase();
+            const t = MIME_MAP[ext];
+            if (t) res.setHeader("Content-Type", t);
+            res.setHeader("Accept-Ranges", "bytes");
+            res.setHeader("Content-Disposition", "inline");
+        }
     })
 );
 

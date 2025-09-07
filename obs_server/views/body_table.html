@@ -19,6 +19,14 @@
         </tbody>
     </table>
 </div>
+
+<div id="video-overlay" aria-hidden="true">
+    <div class="video-wrap">
+        <video id="overlay-video" controls preload="metadata"></video>
+        <button id="overlay-close" type="button" aria-label="Close">×</button>
+    </div>
+</div>
+
 <style>
 :root { --border: #333 }
 .table-wrap { width: 100%; overflow-x: auto }
@@ -29,6 +37,14 @@ a { text-decoration: none }
 tr:hover { background: rgba(255,255,255,0.05) }
 .thumb { display: block; max-width: 180px; max-height: 100px; object-fit: cover; border-radius: 6px }
 .thumb-cell { width: 200px }
+
+#video-overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.9); z-index: 9999; padding: 4vw }
+#video-overlay.active { display: flex }
+.video-wrap { position: relative; width: 100%; max-width: 90vw; max-height: 90vh }
+#overlay-video { width: 100%; height: auto; max-height: 90vh; display: block; background: #000; border-radius: 8px }
+#overlay-close { position: absolute; top: -14px; right: -14px; width: 36px; height: 36px; border: 0; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; font-size: 22px; line-height: 1; cursor: pointer }
+#overlay-close:hover { background: rgba(255,255,255,0.25) }
+
 @media (max-width: 1100px) {
     .thumb { max-width: 120px; max-height: 80px }
     .thumb-cell { width: 140px }
@@ -37,6 +53,7 @@ tr:hover { background: rgba(255,255,255,0.05) }
     .optional { display: none }
 }
 </style>
+
 <script>
 const applyFilter = () => {
     const checks = Array.from(document.querySelectorAll(".ext-filter"));
@@ -47,9 +64,8 @@ const applyFilter = () => {
         r.style.display = (allowed.size === 0 || (ext && allowed.has(ext))) ? "" : "none";
     });
 };
-document.addEventListener("DOMContentLoaded", () => {
-    document.getElementById("filters").addEventListener("change", applyFilter);
-    applyFilter();
+
+const sortInit = () => {
     document.querySelectorAll("th[data-sort]").forEach(th => {
         th.addEventListener("click", () => {
             const tbody = th.closest("table").querySelector("tbody");
@@ -67,6 +83,57 @@ document.addEventListener("DOMContentLoaded", () => {
             th.classList.toggle("desc", !asc);
         });
     });
+};
+
+const overlay = {
+    el: null,
+    video: null,
+    closeBtn: null,
+    open: (src) => {
+        overlay.video.src = src;
+        overlay.el.classList.add("active");
+        overlay.el.setAttribute("aria-hidden", "false");
+        overlay.video.play().catch(() => {});
+    },
+    close: () => {
+        overlay.video.pause();
+        overlay.video.removeAttribute("src");
+        overlay.video.load();
+        overlay.el.classList.remove("active");
+        overlay.el.setAttribute("aria-hidden", "true");
+    },
+    init: () => {
+        overlay.el = document.getElementById("video-overlay");
+        overlay.video = document.getElementById("overlay-video");
+        overlay.closeBtn = document.getElementById("overlay-close");
+        overlay.el.addEventListener("click", (e) => {
+            if (e.target === overlay.el) overlay.close();
+        });
+        overlay.closeBtn.addEventListener("click", overlay.close);
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") overlay.close();
+        });
+    }
+};
+
+const thumbToPlayerInit = () => {
+    document.querySelectorAll("td .thumb").forEach(img => {
+        const a = img.closest("a");
+        if (!a) return;
+        a.addEventListener("click", (e) => {
+            e.preventDefault();
+            overlay.open(a.href);
+        });
+    });
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+    const filt = document.getElementById("filters");
+    if (filt) filt.addEventListener("change", applyFilter);
+    applyFilter();
+    sortInit();
+    overlay.init();
+    thumbToPlayerInit();
 });
 </script>
 
