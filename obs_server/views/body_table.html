@@ -1,5 +1,21 @@
-<h1>OBS Files</h1>
+<header class="obs-head">
+    <div>
+        <h1>OBS Files</h1>
+        <p id="result-count"></p>
+    </div>
+    <div class="search-row">
+        <input id="file-search" type="search" placeholder="Search recordings">
+        <button id="share-link" type="button" data-share-url="%%SHARE_URL%%">Share</button>
+        <div class="view-toggle" aria-label="View mode">
+            <button id="grid-view" type="button" class="active">Grid</button>
+            <button id="table-view" type="button">Table</button>
+        </div>
+    </div>
+</header>
+
+<nav class="category-row" id="category-row"></nav>
 <div class="filters" id="filters">%%FILTERS%%</div>
+<div class="grid-wrap" id="grid-wrap"></div>
 <div class="table-wrap">
     <table id="fileTable">
         <thead>
@@ -12,6 +28,7 @@
                 <th class="optional" data-sort="fps">FPS</th>
                 <th data-sort="size">Size</th>
                 <th data-sort="mtime">Modified</th>
+                <th>Action</th>
             </tr>
         </thead>
         <tbody>
@@ -28,8 +45,33 @@
 </div>
 
 <style>
-:root { --border: #333 }
-.table-wrap { width: 100%; overflow-x: auto }
+:root { --border: #333; --panel: rgba(255,255,255,0.055); --panel-hover: rgba(255,255,255,0.095); --muted: #aaa; --accent: #ff0033 }
+.obs-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-end; margin-bottom: 14px }
+.obs-head h1 { margin-bottom: 4px }
+#result-count { margin: 0; color: var(--muted) }
+.search-row { display: flex; gap: 10px; align-items: center; flex: 1; max-width: 680px }
+#file-search { width: 100%; min-height: 42px; border: 1px solid var(--border); border-radius: 999px; padding: 0 16px; color: inherit; background: rgba(0,0,0,0.2); font: inherit }
+#share-link { min-height: 40px; border: 1px solid var(--border); border-radius: 999px; padding: 0 14px; color: inherit; background: var(--panel); cursor: pointer; font-weight: 700 }
+#share-link.copied { background: var(--accent); border-color: var(--accent); color: #fff }
+.view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; flex: 0 0 auto }
+.view-toggle button { min-height: 40px; border: 0; padding: 0 14px; color: inherit; background: transparent; cursor: pointer }
+.view-toggle button.active { background: var(--panel-hover) }
+.category-row, .filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 16px }
+.category-row button, .filters label { border: 1px solid var(--border); border-radius: 999px; padding: 7px 11px; background: var(--panel); color: inherit; cursor: pointer }
+.category-row button.active { background: var(--accent); border-color: var(--accent); color: #fff }
+.filters label { font-size: 0.92rem }
+.grid-wrap { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 22px 16px; margin-top: 18px }
+.video-card { cursor: pointer; min-width: 0 }
+.card-thumb { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--panel); display: grid; place-items: center; color: var(--muted) }
+.card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block }
+.card-badge { position: absolute; right: 7px; bottom: 7px; border-radius: 4px; padding: 2px 6px; background: rgba(0,0,0,0.8); color: #fff; font-size: 0.78rem }
+.video-card h2 { margin: 9px 0 4px; font-size: 1rem; line-height: 1.28; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }
+.card-meta { color: var(--muted); font-size: 0.88rem }
+.card-actions { margin-top: 8px; display: flex; gap: 8px }
+.card-actions a, .download-link { border-radius: 999px; padding: 6px 10px; background: var(--panel); color: inherit; text-decoration: none; font-weight: 600 }
+.table-wrap { width: 100%; overflow-x: auto; display: none }
+.show-table .table-wrap { display: block }
+.show-table .grid-wrap { display: none }
 table { border-collapse: collapse; width: 100%; table-layout: auto }
 th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
 th { cursor: pointer; text-align: left }
@@ -50,19 +92,53 @@ tr:hover { background: rgba(255,255,255,0.05) }
     .thumb-cell { width: 140px }
 }
 @media (max-width: 800px) {
+    .obs-head { display: block }
+    .search-row { max-width: none }
     .optional { display: none }
+    .grid-wrap { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)) }
 }
 </style>
 
 <script>
+let activeCategory = "All";
+
+const rowData = (row) => {
+    const link = row.querySelector(".file-link");
+    const thumb = row.querySelector(".thumb");
+    const cells = row.children;
+    return {
+        row,
+        href: link ? link.href : "",
+        name: row.dataset.name || (link ? link.textContent.trim() : ""),
+        cat: row.dataset.cat || "",
+        ext: row.dataset.ext || "",
+        thumb: thumb ? thumb.src : "",
+        duration: cells[3] ? cells[3].textContent.trim() : "",
+        resolution: cells[4] ? cells[4].textContent.trim() : "",
+        size: cells[6] ? cells[6].textContent.trim() : "",
+        mtime: cells[7] ? cells[7].textContent.trim() : ""
+    };
+};
+
+const rows = () => Array.from(document.querySelectorAll("#fileTable tbody tr"));
+
 const applyFilter = () => {
     const checks = Array.from(document.querySelectorAll(".ext-filter"));
     const allowed = new Set(checks.filter(c => c.checked).map(c => c.value));
-    const rows = document.querySelectorAll("#fileTable tbody tr");
-    rows.forEach(r => {
+    const q = (document.getElementById("file-search").value || "").trim().toLowerCase();
+    let visible = 0;
+    rows().forEach(r => {
         const ext = r.getAttribute("data-ext") || "";
-        r.style.display = (allowed.size === 0 || (ext && allowed.has(ext))) ? "" : "none";
+        const cat = r.getAttribute("data-cat") || "";
+        const haystack = `${r.getAttribute("data-name") || ""} ${cat} ${ext}`.toLowerCase();
+        const ok = (allowed.size === 0 || (ext && allowed.has(ext))) &&
+            (activeCategory === "All" || cat === activeCategory) &&
+            (!q || haystack.includes(q));
+        r.style.display = ok ? "" : "none";
+        if (ok) visible++;
     });
+    document.getElementById("result-count").textContent = `${visible} file${visible === 1 ? "" : "s"}`;
+    buildGrid();
 };
 
 const sortInit = () => {
@@ -83,6 +159,35 @@ const sortInit = () => {
             th.classList.toggle("desc", !asc);
         });
     });
+};
+
+const categoryInit = () => {
+    const counts = new Map([["All", rows().length]]);
+    rows().forEach(row => {
+        const cat = row.dataset.cat || "Uncategorized";
+        counts.set(cat, (counts.get(cat) || 0) + 1);
+    });
+    const cats = Array.from(counts.keys()).sort((a, b) => a === "All" ? -1 : b === "All" ? 1 : a.localeCompare(b));
+    const wrap = document.getElementById("category-row");
+    wrap.innerHTML = cats.map(cat => `<button type="button" data-cat="${cat.replace(/"/g, "&quot;")}" class="${cat === activeCategory ? "active" : ""}">${cat} · ${counts.get(cat)}</button>`).join("");
+    wrap.addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-cat]");
+        if (!btn) return;
+        activeCategory = btn.dataset.cat;
+        wrap.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === btn));
+        applyFilter();
+    });
+};
+
+const buildGrid = () => {
+    const wrap = document.getElementById("grid-wrap");
+    const visibleRows = rows().filter(row => row.style.display !== "none");
+    wrap.innerHTML = visibleRows.map(row => {
+        const d = rowData(row);
+        const thumb = d.thumb ? `<img src="${d.thumb}" alt="">` : `<span>${d.ext.toUpperCase()}</span>`;
+        const meta = [d.cat, d.duration, d.resolution, d.size].filter(Boolean).join(" · ");
+        return `<article class="video-card" data-href="${d.href}"><div class="card-thumb">${thumb}<span class="card-badge">${d.ext}</span></div><h2>${d.name}</h2><div class="card-meta">${meta}</div><div class="card-actions"><a href="${d.href}" class="play-link">Play</a><a href="${d.href}" download>Download</a></div></article>`;
+    }).join("");
 };
 
 const overlay = {
@@ -117,23 +222,64 @@ const overlay = {
 };
 
 const thumbToPlayerInit = () => {
-    document.querySelectorAll("td .thumb").forEach(img => {
-        const a = img.closest("a");
-        if (!a) return;
-        a.addEventListener("click", (e) => {
+    document.addEventListener("click", (e) => {
+        const play = e.target.closest(".play-link");
+        if (play) {
+            e.preventDefault();
+            overlay.open(play.href);
+            return;
+        }
+        const card = e.target.closest(".video-card");
+        if (card && !e.target.closest("a")) overlay.open(card.dataset.href);
+        const thumbLink = e.target.closest("td .thumb");
+        if (thumbLink) {
+            const a = thumbLink.closest("a");
+            if (!a) return;
             e.preventDefault();
             overlay.open(a.href);
-        });
+        }
+    });
+};
+
+const shareInit = () => {
+    const btn = document.getElementById("share-link");
+    if (!btn) return;
+    const shareUrl = btn.dataset.shareUrl;
+    btn.addEventListener("click", async () => {
+        try {
+            await navigator.clipboard.writeText(shareUrl);
+            btn.textContent = "Copied";
+            btn.classList.add("copied");
+            setTimeout(() => {
+                btn.textContent = "Share";
+                btn.classList.remove("copied");
+            }, 1800);
+        } catch {
+            window.prompt("Share link", shareUrl);
+        }
     });
 };
 
 document.addEventListener("DOMContentLoaded", () => {
     const filt = document.getElementById("filters");
     if (filt) filt.addEventListener("change", applyFilter);
+    const search = document.getElementById("file-search");
+    if (search) search.addEventListener("input", applyFilter);
+    document.getElementById("grid-view").addEventListener("click", () => {
+        document.body.classList.remove("show-table");
+        document.getElementById("grid-view").classList.add("active");
+        document.getElementById("table-view").classList.remove("active");
+    });
+    document.getElementById("table-view").addEventListener("click", () => {
+        document.body.classList.add("show-table");
+        document.getElementById("table-view").classList.add("active");
+        document.getElementById("grid-view").classList.remove("active");
+    });
+    categoryInit();
     applyFilter();
     sortInit();
     overlay.init();
     thumbToPlayerInit();
+    shareInit();
 });
 </script>
-

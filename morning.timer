@@ -2,7 +2,7 @@
 Description=Run wakeup script at 7:30AM (wake up at 8AM)
 
 [Timer]
-OnCalendar=*-*-* 07:30:00
+OnCalendar=*-*-* 08:15:00
 Persistent=true
 AccuracySec=1m
 

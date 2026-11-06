@@ -1,0 +1,62 @@
+{
+	email benjamin@ben256.com
+}
+
+shthub.org, www.shthub.org {
+	reverse_proxy 127.0.0.1:8080
+}
+
+lamangatacos.com, www.lamangatacos.com {
+	reverse_proxy 127.0.0.1:8100
+}
+
+audioma.app, www.audioma.app {
+	reverse_proxy 127.0.0.1:4180
+}
+
+nightdiff.review, www.nightdiff.review {
+	reverse_proxy 127.0.0.1:9001
+}
+
+ben256.com {
+	redir https://www.ben256.com{uri} permanent
+}
+www.ben256.com {
+	reverse_proxy 127.0.0.1:9002
+}
+
+chat.ben256.com {
+	reverse_proxy 127.0.0.1:9003
+}
+
+dgett.dev, www.dgett.dev {
+	reverse_proxy 127.0.0.1:9004
+}
+
+amit-chat.ben256.com {
+	reverse_proxy 127.0.0.1:9005
+}
+
+learn.ben256.com {
+	reverse_proxy 127.0.0.1:9006
+}
+
+sht2.ben256.com {
+	reverse_proxy 127.0.0.1:9007
+}
+
+gym.ben256.com {
+	reverse_proxy 127.0.0.1:9008
+}
+
+itin.ben256.com {
+	reverse_proxy 127.0.0.1:9009
+}
+
+nice2meet.ben256.com {
+	reverse_proxy 127.0.0.1:9010
+}
+
+obs.ben256.com {
+	reverse_proxy 127.0.0.1:3923
+}

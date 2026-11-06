@@ -195,6 +195,22 @@ xset dpms force on       # Wake monitor
 
 Two scripts automate the monitor state and smart bulb behavior.
 
+`bulb-set` discovers Kasa bulbs on the local network at runtime, so the
+routine scripts use group names instead of changing local IP addresses. To see
+the stable identifiers reported by the bulbs:
+
+```bash
+bulb-set --list
+```
+
+Set groups in `/etc/256.env` or `.env` using bulb aliases, MAC addresses,
+device IDs, or IPs. Use commas when an alias contains spaces:
+
+```bash
+BULB_OFFICE="98:03:8E:C1:C8:C7,98:03:8E:C1:5D:4B,98:03:8E:C1:67:FA,98:03:8E:C1:7C:D5"
+BULB_BEDROOM="98:03:8E:C1:F6:57,98:03:8E:C1:66:40"
+```
+
 ### `bedtime.sh`
 
 - Gradually dims bulbs before bed
@@ -207,18 +223,18 @@ set -a
 source /etc/256.env
 set +a
 
-bulb-set $BULB_OFFICE $BULB_BEDROOM --brightness 50 --temp 2700
+bulb-set office bedroom -b 50 -t 2700
 sleep 3600
-bulb-set $BULB_OFFICE $BULB_BEDROOM --brightness 60 --color ffaa00
+bulb-set office bedroom -b 60 --color ffaa00
 sleep 2700
-bulb-set $BULB_OFFICE $BULB_BEDROOM --brightness 45 --color ffaa00
+bulb-set office bedroom -b 45 --color ffaa00
 sleep 900
 
 export DISPLAY=:0
 export XAUTHORITY=/home/benjamin/.Xauthority
 xset dpms force off
 openrgb --device 0 --color 000000
-bulb-set $BULB_OFFICE $BULB_BEDROOM --off
+bulb-set office bedroom --off
 ```
 
 ### `morning.sh`
@@ -233,11 +249,11 @@ set -a
 source /etc/256.env
 set +a
 
-bulb-set $BULB_BEDROOM --brightness 5 --temp 2500
+bulb-set bedroom -b 5 -t 2500
 sleep 900
-bulb-set $BULB_BEDROOM --brightness 25 --temp 3000
+bulb-set bedroom -b 25 -t 3000
 sleep 900
-bulb-set $BULB_BEDROOM $BULB_OFFICE --brightness 100 --temp 5000
+bulb-set bedroom office -b 100 -t 5000
 
 export DISPLAY=:0
 export XAUTHORITY=/home/benjamin/.Xauthority
@@ -291,4 +307,3 @@ This will:
 - Symlink `bulb-set.py` to `/usr/local/bin/bulb-set`
 - Install `.service` and `.timer` units
 - Reload and enable the timer units
-
