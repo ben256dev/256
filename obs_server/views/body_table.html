@@ -1,285 +1,878 @@
-<header class="obs-head">
-    <div>
+<div id="obs" class="%%OWNER_CLASS%%">
+<header class="topbar">
+    <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor"/></svg></span>
         <h1>OBS Files</h1>
-        <p id="result-count"></p>
+        <span id="result-count"></span>
     </div>
-    <div class="search-row">
-        <input id="file-search" type="search" placeholder="Search recordings">
-        <button id="share-link" type="button" data-share-url="%%SHARE_URL%%">Share</button>
-        <div class="view-toggle" aria-label="View mode">
-            <button id="grid-view" type="button" class="active">Grid</button>
-            <button id="table-view" type="button">Table</button>
+    <div class="tools">
+        <label class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+            <input id="q" type="search" placeholder="Search recordings" autocomplete="off">
+        </label>
+        <div class="seg" role="group" aria-label="View">
+            <button type="button" data-view="browse">Browse</button>
+            <button type="button" data-view="grid">Library</button>
+            <button type="button" data-view="table">Table</button>
         </div>
+        <button id="share-link" class="btn ghost" type="button" data-share-url="%%SHARE_URL%%">Share</button>
     </div>
 </header>
 
-<nav class="category-row" id="category-row"></nav>
-<div class="filters" id="filters">%%FILTERS%%</div>
-<div class="grid-wrap" id="grid-wrap"></div>
-<div class="table-wrap">
-    <table id="fileTable">
-        <thead>
-            <tr>
-                <th data-sort="thumb">Thumb</th>
-                <th data-sort="name">Name</th>
-                <th data-sort="game">Game</th>
-                <th data-sort="duration">Duration</th>
-                <th class="optional" data-sort="resolution">Resolution</th>
-                <th class="optional" data-sort="fps">FPS</th>
-                <th data-sort="size">Size</th>
-                <th data-sort="mtime">Modified</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            %%ROWS%%
-        </tbody>
-    </table>
-</div>
+<section id="hero" hidden></section>
+<div id="browse"></div>
 
-<div id="video-overlay" aria-hidden="true">
-    <div class="video-wrap">
-        <video id="overlay-video" controls preload="metadata"></video>
-        <button id="overlay-close" type="button" aria-label="Close">×</button>
+<section id="library" hidden>
+    <nav class="chips" id="cat-chips" aria-label="Categories"></nav>
+    <div class="lib-bar">
+        <div class="chips small" id="kind-chips" aria-label="Type"></div>
+        <label class="sort">Sort
+            <select id="sort">
+                <option value="new">Newest</option>
+                <option value="old">Oldest</option>
+                <option value="name">Name</option>
+                <option value="long">Longest</option>
+                <option value="size">Largest</option>
+            </select>
+        </label>
+    </div>
+    <div class="grid" id="grid"></div>
+</section>
+
+<section id="table-wrap" hidden>
+    <div id="bulk" hidden>
+        <span id="bulk-count"></span>
+        <span class="bulk-actions"></span>
+    </div>
+    <table id="file-table">
+        <thead><tr>
+            <th class="sel" hidden><input type="checkbox" id="sel-all" aria-label="Select all"></th>
+            <th data-k="name">Name</th>
+            <th data-k="cat">Category</th>
+            <th data-k="dur">Duration</th>
+            <th data-k="res" class="optional">Resolution</th>
+            <th data-k="fps" class="optional">FPS</th>
+            <th data-k="size">Size</th>
+            <th data-k="t">Recorded</th>
+            <th class="more-col"><span class="sr">Options</span></th>
+        </tr></thead>
+        <tbody></tbody>
+    </table>
+</section>
+
+<div id="player" aria-hidden="true" role="dialog" aria-label="Player">
+    <div class="player-box">
+        <div class="player-head">
+            <div class="player-name"><div id="player-title"></div><div id="player-sub"></div></div>
+            <div class="player-actions" id="player-actions"></div>
+        </div>
+        <video id="player-video" controls preload="metadata" playsinline></video>
+        <img id="player-img" alt="">
     </div>
 </div>
 
+<div id="menu" role="menu" hidden></div>
+<dialog id="rename-dialog">
+    <form method="dialog" id="rename-form">
+        <label for="rename-input">Name</label>
+        <input id="rename-input" maxlength="200" autocomplete="off">
+        <p class="hint">Only changes the name shown here; the file on disk keeps its name.</p>
+        <div class="dlg-actions">
+            <button type="button" class="btn ghost" data-dlg="reset">Reset to automatic</button>
+            <span></span>
+            <button type="button" class="btn ghost" data-dlg="cancel">Cancel</button>
+            <button type="submit" class="btn primary">Save</button>
+        </div>
+    </form>
+</dialog>
+</div>
+
+<script type="application/json" id="obs-data">%%DATA%%</script>
+
 <style>
-:root { --border: #333; --panel: rgba(255,255,255,0.055); --panel-hover: rgba(255,255,255,0.095); --muted: #aaa; --accent: #ff0033 }
-.obs-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-end; margin-bottom: 14px }
-.obs-head h1 { margin-bottom: 4px }
-#result-count { margin: 0; color: var(--muted) }
-.search-row { display: flex; gap: 10px; align-items: center; flex: 1; max-width: 680px }
-#file-search { width: 100%; min-height: 42px; border: 1px solid var(--border); border-radius: 999px; padding: 0 16px; color: inherit; background: rgba(0,0,0,0.2); font: inherit }
-#share-link { min-height: 40px; border: 1px solid var(--border); border-radius: 999px; padding: 0 14px; color: inherit; background: var(--panel); cursor: pointer; font-weight: 700 }
-#share-link.copied { background: var(--accent); border-color: var(--accent); color: #fff }
-.view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; flex: 0 0 auto }
-.view-toggle button { min-height: 40px; border: 0; padding: 0 14px; color: inherit; background: transparent; cursor: pointer }
-.view-toggle button.active { background: var(--panel-hover) }
-.category-row, .filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 16px }
-.category-row button, .filters label { border: 1px solid var(--border); border-radius: 999px; padding: 7px 11px; background: var(--panel); color: inherit; cursor: pointer }
-.category-row button.active { background: var(--accent); border-color: var(--accent); color: #fff }
-.filters label { font-size: 0.92rem }
-.grid-wrap { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 22px 16px; margin-top: 18px }
-.video-card { cursor: pointer; min-width: 0 }
-.card-thumb { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--panel); display: grid; place-items: center; color: var(--muted) }
-.card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block }
-.card-badge { position: absolute; right: 7px; bottom: 7px; border-radius: 4px; padding: 2px 6px; background: rgba(0,0,0,0.8); color: #fff; font-size: 0.78rem }
-.video-card h2 { margin: 9px 0 4px; font-size: 1rem; line-height: 1.28; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }
-.card-meta { color: var(--muted); font-size: 0.88rem }
-.card-actions { margin-top: 8px; display: flex; gap: 8px }
-.card-actions a, .download-link { border-radius: 999px; padding: 6px 10px; background: var(--panel); color: inherit; text-decoration: none; font-weight: 600 }
-.table-wrap { width: 100%; overflow-x: auto; display: none }
-.show-table .table-wrap { display: block }
-.show-table .grid-wrap { display: none }
-table { border-collapse: collapse; width: 100%; table-layout: auto }
-th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
-th { cursor: pointer; text-align: left }
-a { text-decoration: none }
-tr:hover { background: rgba(255,255,255,0.05) }
-.thumb { display: block; max-width: 180px; max-height: 100px; object-fit: cover; border-radius: 6px }
-.thumb-cell { width: 200px }
-
-#video-overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.9); z-index: 9999; padding: 4vw }
-#video-overlay.active { display: flex }
-.video-wrap { position: relative; width: 100%; max-width: 90vw; max-height: 90vh }
-#overlay-video { width: 100%; height: auto; max-height: 90vh; display: block; background: #000; border-radius: 8px }
-#overlay-close { position: absolute; top: -14px; right: -14px; width: 36px; height: 36px; border: 0; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; font-size: 22px; line-height: 1; cursor: pointer }
-#overlay-close:hover { background: rgba(255,255,255,0.25) }
-
-@media (max-width: 1100px) {
-    .thumb { max-width: 120px; max-height: 80px }
-    .thumb-cell { width: 140px }
+#obs {
+    --accent: #ff0033; --bg2: #181818; --panel: rgba(255,255,255,.06); --panel2: rgba(255,255,255,.11);
+    --line: rgba(255,255,255,.12); --muted: #a3a3a3; --text: #f1f1f1;
 }
+#obs * { box-sizing: border-box }
+#obs [hidden] { display: none !important }
+#obs svg { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none }
+#obs button, #obs select, #obs input { font: inherit; color: inherit }
+
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px }
+.brand { display: flex; align-items: center; gap: 10px }
+.brand h1 { margin: 0; font-size: 1.5rem; letter-spacing: -.01em }
+.brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 18px }
+.brand-mark svg { stroke: none }
+#result-count { color: var(--muted); font-size: .9rem; margin-left: 4px }
+.tools { display: flex; gap: 10px; align-items: center; flex: 1; justify-content: flex-end; min-width: 0 }
+.search { display: flex; align-items: center; gap: 8px; flex: 1; max-width: 360px; min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: rgba(0,0,0,.25); color: var(--muted) }
+.search:focus-within { border-color: #fff; color: var(--text) }
+.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; flex: none }
+.seg button { min-height: 38px; border: 0; padding: 0 14px; background: transparent; cursor: pointer }
+.seg button.active { background: var(--panel2); font-weight: 700 }
+.btn { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 18px; border-radius: 6px; border: 0; cursor: pointer; font-weight: 700; text-decoration: none; color: inherit; white-space: nowrap }
+#obs .btn.primary { background: #fff; color: #000 }
+.btn.primary:hover { background: rgba(255,255,255,.8) }
+.btn.ghost { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 0 14px }
+.btn.ghost:hover { background: var(--panel2) }
+.btn.copied { background: var(--accent); border-color: var(--accent); color: #fff }
+.btn.glass { background: rgba(109,109,110,.7); color: #fff }
+.btn.glass:hover { background: rgba(109,109,110,.5) }
+
+/* Hero */
+#hero { position: relative; border-radius: 14px; overflow: hidden; width: 100%; height: clamp(280px, 36vw, 540px); margin-bottom: 28px; background: #000 }
+#hero .hero-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; animation: kenburns 30s ease-in-out infinite alternate }
+#hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0,0,0,.85) 0%, rgba(0,0,0,.45) 45%, transparent 75%), linear-gradient(0deg, rgba(15,15,15,.9), transparent 45%) }
+.hero-body { position: absolute; z-index: 1; left: clamp(18px, 4vw, 48px); bottom: clamp(18px, 4vw, 44px); max-width: min(560px, 80%) }
+.hero-kicker { display: inline-flex; align-items: center; gap: 8px; font-size: .8rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #ddd }
+.hero-body h2 { margin: 8px 0 6px; font-size: clamp(1.5rem, 3.4vw, 2.6rem); line-height: 1.05; text-shadow: 0 2px 12px rgba(0,0,0,.5) }
+.hero-meta { color: #ddd; margin-bottom: 16px; font-size: .95rem }
+.hero-actions { display: flex; gap: 10px; flex-wrap: wrap }
+@keyframes kenburns { from { transform: scale(1) } to { transform: scale(1.08) translate(-1%, -1%) } }
+@media (prefers-reduced-motion: reduce) { #hero .hero-art { animation: none } }
+
+/* Category icon chip */
+.ico { display: inline-block; flex: none; width: 30px; height: 30px; border-radius: 7px; object-fit: cover; vertical-align: middle }
+.ico.sm { width: 20px; height: 20px; border-radius: 5px }
+
+/* Rows */
+.row { margin: 0 0 22px }
+.row-head { display: flex; align-items: center; gap: 10px; margin: 0 0 2px }
+.row-head h2 { margin: 0; font-size: 1.2rem }
+.row-head .count { color: var(--muted); font-size: .9rem }
+.see-all { margin-left: auto; border: 0; background: none; color: var(--muted); cursor: pointer; font-weight: 700; font-size: .9rem; display: inline-flex; align-items: center; gap: 4px }
+.see-all:hover { color: var(--text) }
+.row-view { position: relative }
+.track { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(220px, 22%, 330px); gap: 10px; overflow-x: auto; overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory; scrollbar-width: none; padding: 22px 4px 26px; margin: -14px -4px -18px }
+.track::-webkit-scrollbar { display: none }
+.track > .card { scroll-snap-align: start }
+.nav { position: absolute; top: 8px; bottom: 26px; width: 44px; border: 0; z-index: 5; cursor: pointer; color: #fff; font-size: 28px; display: grid; place-items: center; opacity: 0; transition: opacity .2s }
+.nav.prev { left: -4px; background: linear-gradient(90deg, rgba(15,15,15,.95), transparent); border-radius: 8px 0 0 8px }
+.nav.next { right: -4px; background: linear-gradient(270deg, rgba(15,15,15,.95), transparent); border-radius: 0 8px 8px 0 }
+.row-view:hover .nav:not([disabled]) { opacity: 1 }
+.nav[disabled] { pointer-events: none }
+
+/* Cards */
+.card { position: relative; min-width: 0; cursor: pointer; outline: none; z-index: 1; transition: z-index 0s .22s }
+.art { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--bg2); box-shadow: 0 0 0 1px var(--line);
+    transform-origin: center bottom; transition: transform .22s ease, box-shadow .22s ease }
+.art > img { width: 100%; height: 100%; object-fit: cover; display: block; background: var(--bg2) }
+.art .scrub { position: absolute; inset: 0; background-repeat: no-repeat; opacity: 0; transition: opacity .15s }
+.card.previewing .scrub { opacity: 1 }
+.scrub-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.25); opacity: 0 }
+.scrub-bar i { display: block; height: 100%; width: 0; background: #fff; transition: width .15s linear }
+.card.previewing .scrub-bar { opacity: 1 }
+.badge { position: absolute; border-radius: 4px; padding: 2px 6px; background: rgba(0,0,0,.78); color: #fff; font-size: .75rem; font-weight: 700; line-height: 1.4 }
+.badge.dur { right: 7px; bottom: 7px }
+.badge.status { left: 7px; top: 7px; background: var(--accent) }
+.badge.status.queued { background: rgba(0,0,0,.78) }
+.badge.new { left: 7px; top: 7px; background: var(--accent); letter-spacing: .05em }
+.prog { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.3) }
+.prog i { display: block; height: 100%; background: var(--accent) }
+.card.previewing .prog { opacity: 0 }
+.play-ico { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; display: grid; place-items: center; background: rgba(0,0,0,.55); border: 2px solid rgba(255,255,255,.85); color: #fff; font-size: 18px; opacity: 0; transform: scale(.85); transition: .2s }
+.play-ico svg { stroke: none; margin-left: 3px }
+.card:hover .play-ico, .card:focus-visible .play-ico { opacity: 1; transform: none }
+.card.previewing .play-ico { opacity: 0 }
+.info { padding: 8px 2px 0 }
+.info h3 { margin: 0; font-size: .95rem; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.info .meta { color: var(--muted); font-size: .82rem; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.card .cat-tag { display: inline-flex; align-items: center; gap: 6px }
+@media (hover: hover) and (pointer: fine) {
+    /* Only the thumbnail grows (upward from its bottom edge), so the title, meta and ⋯ never move. */
+    .card:hover, .card:focus-within { z-index: 4; transition: z-index 0s }
+    .card:hover .art, .card:focus-visible .art { transform: scale(1.06); transition: transform .22s ease .12s, box-shadow .22s ease .12s;
+        box-shadow: 0 14px 30px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.25) }
+    .track > .card:first-child .art { transform-origin: left bottom }
+    .track > .card:last-child .art { transform-origin: right bottom }
+}
+/* Audio / file art */
+.art.gen { background: linear-gradient(135deg, hsl(var(--h) 55% 28%), hsl(calc(var(--h) + 50) 60% 12%)) }
+.art.gen > img.wave { position: absolute; left: 0; right: 0; top: 50%; height: 50%; width: 100%; transform: translateY(-50%); object-fit: fill; opacity: .5; mix-blend-mode: screen; background: none }
+.art.gen > img.cover { opacity: 1 }
+.art .gen-glyph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 1.6rem; font-weight: 800; color: rgba(255,255,255,.75) }
+.chips button .ico.sm { margin-left: -6px }
+
+/* Library */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px }
+.chips button { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; background: var(--panel); cursor: pointer; font-weight: 600 }
+.chips button:hover { background: var(--panel2) }
+#obs .chips button.active { background: #fff; color: #000; border-color: #fff }
+.chips button .n { color: var(--muted); font-weight: 400 }
+.chips button.active .n { color: #555 }
+.chips.small button { padding: 5px 12px; font-size: .88rem }
+.lib-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px }
+.lib-bar .chips { margin: 0 }
+.sort { color: var(--muted); display: inline-flex; gap: 8px; align-items: center }
+.sort select { background: var(--bg2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px 12px; padding-top: 10px }
+.empty { color: var(--muted); padding: 40px 0; text-align: center }
+
+/* Table */
+#table-wrap { overflow-x: auto }
+#file-table { border-collapse: collapse; width: 100% }
+#file-table th, #file-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: middle }
+#file-table th[data-k] { cursor: pointer; user-select: none }
+#file-table th.asc::after { content: " ▲"; font-size: .7em } #file-table th.desc::after { content: " ▼"; font-size: .7em }
+#file-table tbody tr { cursor: pointer }
+#file-table tbody tr:hover { background: rgba(255,255,255,.05) }
+#file-table td.name { display: flex; align-items: center; gap: 10px; max-width: 420px; overflow: hidden; text-overflow: ellipsis }
+#file-table td.name img { width: 72px; aspect-ratio: 16/9; object-fit: cover; border-radius: 4px; background: var(--bg2) }
+#file-table a.f { display: inline-block; margin-right: 6px; padding: 2px 8px; border-radius: 999px; background: var(--panel); text-decoration: none; color: inherit; font-size: .82rem }
+#file-table a.f:hover { background: var(--panel2) }
+#file-table .sel { width: 36px; text-align: center }
+#file-table .sel input { width: 17px; height: 17px; cursor: pointer; accent-color: var(--accent) }
+#file-table tr.picked { background: rgba(255,0,51,.08) }
+#bulk { position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 8px; border-radius: 8px; background: #222; border: 1px solid var(--line) }
+#bulk-count { font-weight: 800; margin-right: 6px }
+.bulk-actions { display: inline-flex; gap: 8px }
+.card.trash .art > img { filter: grayscale(.8) brightness(.65) }
+.row.trash-row { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--line) }
+.row.trash-row h2 { color: var(--muted) }
+
+/* Player */
+#player { position: fixed; inset: 0; z-index: 9999; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.92); padding: 3vw }
+#player.active { display: flex }
+.player-box { width: min(1400px, 100%); }
+.player-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px }
+#player-title { font-weight: 800; font-size: 1.1rem }
+.player-name { flex: 1; min-width: 0 }
+
+#player-sub { color: var(--muted); font-size: .88rem }
+.player-actions { display: flex; gap: 8px; align-items: center }
+/* Icon buttons, ⋯ menu, dialog */
+.icon-btn { display: inline-grid; place-items: center; width: 40px; height: 40px; flex: none; border: 0; border-radius: 50%; background: rgba(255,255,255,.1); color: #fff; font-size: 20px; cursor: pointer; text-decoration: none }
+.icon-btn:hover, .icon-btn:focus-visible { background: rgba(255,255,255,.22) }
+.icon-btn.danger { color: #ff4d6a }
+.icon-btn.danger:hover { background: rgba(255,0,51,.2) }
+.icon-btn.ok { color: #4ade80 }
+.more { display: inline-grid; place-items: center; width: 30px; height: 30px; flex: none; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 20px; cursor: pointer }
+.more:hover, .more:focus-visible, .more[aria-expanded="true"] { background: var(--panel2); color: var(--text) }
+.info { display: flex; gap: 4px; align-items: flex-start }
+.info-text { flex: 1; min-width: 0 }
+.info .more { margin: -3px -6px 0 0 }
+#menu { position: fixed; z-index: 10001; min-width: 220px; padding: 6px; border-radius: 10px; background: #262626; border: 1px solid var(--line); box-shadow: 0 16px 40px rgba(0,0,0,.6) }
+#menu button, #menu a { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 12px; border: 0; border-radius: 6px; background: none; color: var(--text); text-decoration: none; text-align: left; cursor: pointer; font-size: .92rem }
+#menu button:hover, #menu a:hover, #menu button:focus-visible, #menu a:focus-visible { background: rgba(255,255,255,.1); outline: none }
+#menu svg { font-size: 18px; color: var(--muted) }
+#menu .danger, #menu .danger svg { color: #ff4d6a }
+#menu hr { border: 0; border-top: 1px solid var(--line); margin: 6px 4px }
+#menu .menu-sub { color: var(--muted); font-size: .8rem; margin-left: auto }
+#rename-dialog { width: min(520px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #1f1f1f; color: var(--text) }
+#rename-dialog::backdrop { background: rgba(0,0,0,.6) }
+#rename-dialog label { display: block; font-weight: 800; margin-bottom: 8px }
+#rename-input { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(0,0,0,.35); color: inherit; font: inherit; font-weight: 700 }
+#rename-input:focus { border-color: #fff; outline: none }
+#rename-dialog .hint { color: var(--muted); font-size: .82rem; margin: 8px 0 16px }
+.dlg-actions { display: flex; gap: 8px; align-items: center }
+.dlg-actions span { flex: 1 }
+#obs .dlg-actions .btn.primary, #rename-dialog .btn.primary { background: #fff; color: #000 }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0) }
+#file-table .more-col { width: 44px }
+.status-tag { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--accent); color: #fff; font-size: .72rem; font-weight: 700 }
+#player-video, #player-img { display: block; width: 100%; max-height: calc(100vh - 140px); background: #000; border-radius: 8px; object-fit: contain }
+
 @media (max-width: 800px) {
-    .obs-head { display: block }
-    .search-row { max-width: none }
+    .tools { flex-wrap: wrap; justify-content: flex-start; flex-basis: 100% }
+    .search { max-width: none; flex-basis: 100% }
+    .track { grid-auto-columns: 68vw }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) }
+    #hero { height: auto; aspect-ratio: 4 / 5 }
+    #hero::after { background: linear-gradient(0deg, rgba(15,15,15,.95) 10%, rgba(0,0,0,.35) 65%, transparent) }
+    .hero-body { max-width: none; right: 18px }
     .optional { display: none }
-    .grid-wrap { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)) }
+    .nav { display: none }
+    #cat-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-right: -16px; padding-right: 16px }
+    #cat-chips button { flex: none }
 }
 </style>
 
 <script>
-let activeCategory = "All";
+(() => {
+const DATA = JSON.parse(document.getElementById("obs-data").textContent);
+const ITEMS = DATA.items;
+const CATS = DATA.categories || {};
+const FRAMES = DATA.spriteFrames || 12;
+const NEW_MS = 3 * 864e5;
 
-const rowData = (row) => {
-    const link = row.querySelector(".file-link");
-    const thumb = row.querySelector(".thumb");
-    const cells = row.children;
-    return {
-        row,
-        href: link ? link.href : "",
-        name: row.dataset.name || (link ? link.textContent.trim() : ""),
-        cat: row.dataset.cat || "",
-        ext: row.dataset.ext || "",
-        thumb: thumb ? thumb.src : "",
-        duration: cells[3] ? cells[3].textContent.trim() : "",
-        resolution: cells[4] ? cells[4].textContent.trim() : "",
-        size: cells[6] ? cells[6].textContent.trim() : "",
-        mtime: cells[7] ? cells[7].textContent.trim() : ""
-    };
+// ---- UI glyphs (controls only; category icons are real artwork from DATA.icons) ---------------
+const ICONS = {
+    play: '<path d="M7 4.5v15l12.5-7.5z" fill="currentColor" stroke="none"/>',
+    download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+    left: '<path d="M15 18l-6-6 6-6"/>',
+    right: '<path d="M9 18l6-6-6-6"/>',
+    more: '<circle cx="5" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.7" fill="currentColor" stroke="none"/>',
+    trash: '<path d="M3 6h18"/><path d="M8 6V4.5A1.5 1.5 0 0 1 9.5 3h5A1.5 1.5 0 0 1 16 4.5V6"/><path d="M18.5 6l-.9 13.1A2 2 0 0 1 15.6 21H8.4a2 2 0 0 1-2-1.9L5.5 6"/><path d="M10 10.5v6M14 10.5v6"/>',
+    restore: '<path d="M3 12a9 9 0 1 0 2.64-6.36L3 8.3"/><path d="M3 3v5.3h5.3"/>',
+    pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    external: '<path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    check: '<path d="M20 6L9 17l-5-5"/>',
+    x: '<path d="M18 6L6 18M6 6l12 12"/>'
+};
+const svg = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
+const ICON_SRC = DATA.icons || {};
+const IS_OWNER = Boolean(DATA.isOwner);
+
+// ---- Helpers --------------------------------------------------------------------------------
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const hash = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h); };
+const pretty = (s) => s.replace(/[_]+/g, " ").replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\bS(\d+)e(\d+)\b/gi, (_, a, b) => `S${a}E${b}`);
+const catInfo = (cat) => {
+    const c = CATS[cat] || {};
+    return { title: c.title || pretty(cat), icon: ICON_SRC[cat] || "", hue: c.hue ?? hash(cat) % 360 };
+};
+// No artwork → no icon at all.
+const catIco = (cat, cls = "") => { const c = catInfo(cat); return c.icon ? `<img class="ico ${cls}" src="${esc(c.icon)}" alt="">` : ""; };
+const fmtDur = (s) => {
+    if (!s) return "";
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = String(s % 60).padStart(2, "0");
+    return h ? `${h}:${String(m).padStart(2, "0")}:${x}` : `${m}:${x}`;
+};
+const fmtLong = (s) => { if (!s) return ""; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? `${h}h ${m}m` : `${Math.max(m, 1)}m`; };
+const fmtBytes = (n) => { const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return `${n.toFixed(n < 10 && i ? 1 : 0)} ${u[i]}`; };
+const dayFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const longFmt = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" });
+const fmtDay = (t) => {
+    const d = new Date(t), today = new Date(); today.setHours(0, 0, 0, 0);
+    const diff = Math.round((today - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
+    return diff === 0 ? "Today" : diff === 1 ? "Yesterday" : dayFmt.format(d);
+};
+const OBS_NAME = /^(\d{4})-(\d{2})-(\d{2})[ _T](\d{2})-(\d{2})-(\d{2})/;
+const stemName = (n) => n.replace(/\.[^.]+$/, "");
+const titleOf = (it) => {
+    if (it.custom) return it.custom;
+    const s = stemName(it.name);
+    if (OBS_NAME.test(s)) {
+        const d = new Date(it.t);
+        return `${longFmt.format(d)}${d.getFullYear() !== new Date().getFullYear() ? ", " + d.getFullYear() : ""} · ${timeFmt.format(d)}`;
+    }
+    return pretty(s);
+};
+const CLEANUP = DATA.cleanupCat || "_cleanup";
+if (!CATS[CLEANUP]) CATS[CLEANUP] = { title: "Marked for cleanup" };
+ITEMS.forEach((it, i) => {
+    it.i = i;
+    it.title = titleOf(it);
+    it.homeCat = it.cleanup ? it.origCat : it.cat; // category it came from, for display
+    it.catTitle = catInfo(it.homeCat).title;
+    it.dated = OBS_NAME.test(stemName(it.name));
+});
+const LIVE = ITEMS.filter((it) => !it.cleanup);
+const TRASH = ITEMS.filter((it) => it.cleanup);
+
+// ---- Watch progress (per viewer, best-effort) -------------------------------------------------
+const store = {
+    get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+let progress = store.get("obs-progress", {});
+const pct = (it) => { const p = progress[it.href]; return p && p.d ? Math.min(100, (p.t / p.d) * 100) : 0; };
+
+// ---- State ------------------------------------------------------------------------------------
+const state = { view: store.get("obs-view", "browse"), cat: "All", kinds: new Set(), q: "", sort: "new", tsort: { k: "t", dir: -1 } };
+const $ = (s) => document.querySelector(s);
+
+const matches = (it) => {
+    if (state.cat === "All" ? it.cleanup : it.cat !== state.cat) return false;
+    if (state.kinds.size && !state.kinds.has(it.kind)) return false;
+    if (state.q) {
+        const hay = `${it.name} ${it.title} ${it.cat} ${it.catTitle} ${it.ext}`.toLowerCase();
+        if (!state.q.split(/\s+/).every((w) => hay.includes(w))) return false;
+    }
+    return true;
+};
+const SORTS = {
+    new: (a, b) => b.t - a.t, old: (a, b) => a.t - b.t,
+    name: (a, b) => a.title.localeCompare(b.title, undefined, { numeric: true }),
+    long: (a, b) => b.dur - a.dur, size: (a, b) => b.size - a.size
 };
 
-const rows = () => Array.from(document.querySelectorAll("#fileTable tbody tr"));
+// ---- Cards ------------------------------------------------------------------------------------
+const cardArt = (it) => {
+    const h = catInfo(it.cat).hue;
+    if (it.kind === "video") {
+        const st = it.status ? `<span class="badge status ${it.status}">${it.status === "converting" ? "Converting…" : "Queued"}</span>`
+            : Date.now() - it.t < NEW_MS ? `<span class="badge new">NEW</span>` : "";
+        return `<div class="art" style="--h:${h}"><img loading="lazy" src="${esc(it.art)}" alt="" onerror="this.style.visibility='hidden'">
+            <div class="scrub"></div>${st}${it.dur ? `<span class="badge dur">${fmtDur(it.dur)}</span>` : ""}
+            ${pct(it) > 1 ? `<div class="prog"><i style="width:${pct(it)}%"></i></div>` : ""}
+            <div class="scrub-bar"><i></i></div><span class="play-ico">${svg("play")}</span></div>`;
+    }
+    if (it.kind === "audio") {
+        return `<div class="art gen" style="--h:${h}"><img loading="lazy" class="${it.cover ? "cover" : "wave"}" src="${esc(it.art)}" alt="" onerror="this.remove()">
+            ${it.dur ? `<span class="badge dur">${fmtDur(it.dur)}</span>` : ""}
+            ${pct(it) > 1 ? `<div class="prog"><i style="width:${pct(it)}%"></i></div>` : ""}<span class="play-ico">${svg("play")}</span></div>`;
+    }
+    if (it.kind === "image") return `<div class="art"><img loading="lazy" src="${esc(it.art)}" alt=""></div>`;
+    return `<div class="art gen" style="--h:${h}"><span class="gen-glyph">.${esc(it.ext || "file")}</span></div>`;
+};
+const moreBtn = (it) => `<button class="more" type="button" data-menu="${it.i}" aria-label="Options" aria-haspopup="menu" title="Options">${svg("more")}</button>`;
+const card = (it, showCat = true) => {
+    // OBS-named items already show the date as their title, so lead with length/size instead.
+    const meta = [showCat || it.cleanup ? `<span class="cat-tag">${catIco(it.homeCat, "sm")}${esc(it.catTitle)}</span>` : "",
+        it.dated && !showCat ? fmtLong(it.dur) : fmtDay(it.t), it.dated && !showCat || !it.dur ? fmtBytes(it.size) : ""]
+        .filter(Boolean).join(" · ");
+    return `<article class="card${it.cleanup ? " trash" : ""}" data-i="${it.i}" tabindex="0" title="${esc(it.name)}">${cardArt(it)}
+        <div class="info"><div class="info-text"><h3>${esc(it.title)}</h3><div class="meta">${meta}</div></div>${moreBtn(it)}</div></article>`;
+};
 
-const applyFilter = () => {
-    const checks = Array.from(document.querySelectorAll(".ext-filter"));
-    const allowed = new Set(checks.filter(c => c.checked).map(c => c.value));
-    const q = (document.getElementById("file-search").value || "").trim().toLowerCase();
-    let visible = 0;
-    rows().forEach(r => {
-        const ext = r.getAttribute("data-ext") || "";
-        const cat = r.getAttribute("data-cat") || "";
-        const haystack = `${r.getAttribute("data-name") || ""} ${cat} ${ext}`.toLowerCase();
-        const ok = (allowed.size === 0 || (ext && allowed.has(ext))) &&
-            (activeCategory === "All" || cat === activeCategory) &&
-            (!q || haystack.includes(q));
-        r.style.display = ok ? "" : "none";
-        if (ok) visible++;
+// ---- Hover preview: step through the storyboard sprite, scrub with the pointer ------------------
+let preview = null;
+const stopPreview = () => {
+    if (!preview) return;
+    clearTimeout(preview.delay); clearInterval(preview.timer);
+    preview.el.classList.remove("previewing");
+    preview = null;
+};
+const showFrame = (p, f) => {
+    p.frame = f;
+    p.scrub.style.backgroundPosition = `${(f / (FRAMES - 1)) * 100}% 0`;
+    p.bar.style.width = `${((f + 1) / FRAMES) * 100}%`;
+};
+const startPreview = (el) => {
+    const it = ITEMS[el.dataset.i];
+    if (!it || !it.sprite || preview?.el === el) return;
+    stopPreview();
+    const p = preview = { el, frame: 0, scrub: el.querySelector(".scrub"), bar: el.querySelector(".scrub-bar i") };
+    p.delay = setTimeout(() => {
+        const img = new Image();
+        img.onload = () => {
+            if (preview !== p) return;
+            p.scrub.style.backgroundImage = `url("${it.sprite}")`;
+            p.scrub.style.backgroundSize = `${FRAMES * 100}% 100%`;
+            showFrame(p, p.frame);
+            el.classList.add("previewing");
+            p.timer = setInterval(() => { if (Date.now() - (p.moved || 0) > 900) showFrame(p, (p.frame + 1) % FRAMES); }, 700);
+        };
+        img.src = it.sprite;
+    }, 280);
+};
+const hoverInit = () => {
+    if (!matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    document.addEventListener("pointerover", (e) => {
+        const c = e.target.closest(".card");
+        if (c) startPreview(c); else stopPreview();
     });
-    document.getElementById("result-count").textContent = `${visible} file${visible === 1 ? "" : "s"}`;
-    buildGrid();
+    document.addEventListener("pointermove", (e) => {
+        if (!preview || !preview.el.classList.contains("previewing")) return;
+        const art = preview.el.querySelector(".art"), r = art.getBoundingClientRect();
+        if (e.clientY > r.bottom) return;
+        const f = Math.max(0, Math.min(FRAMES - 1, Math.floor(((e.clientX - r.left) / r.width) * FRAMES)));
+        preview.moved = Date.now();
+        if (f !== preview.frame) showFrame(preview, f);
+    });
+    document.addEventListener("pointerleave", stopPreview);
 };
 
-const sortInit = () => {
-    document.querySelectorAll("th[data-sort]").forEach(th => {
-        th.addEventListener("click", () => {
-            const tbody = th.closest("table").querySelector("tbody");
-            const rows = Array.from(tbody.querySelectorAll("tr"));
-            const idx = Array.from(th.parentNode.children).indexOf(th);
-            const asc = !th.classList.contains("asc");
-            rows.sort((a, b) => {
-                const va = (a.children[idx].textContent || "").trim().toLowerCase();
-                const vb = (b.children[idx].textContent || "").trim().toLowerCase();
-                return asc ? va.localeCompare(vb) : vb.localeCompare(va);
-            });
-            tbody.innerHTML = "";
-            rows.forEach(r => tbody.appendChild(r));
-            th.classList.toggle("asc", asc);
-            th.classList.toggle("desc", !asc);
+// ---- Views ------------------------------------------------------------------------------------
+const groupByCat = (list) => {
+    const m = new Map();
+    for (const it of list) { if (!m.has(it.cat)) m.set(it.cat, []); m.get(it.cat).push(it); }
+    for (const arr of m.values()) arr.sort(SORTS.new);
+    return [...m.entries()].sort((a, b) => b[1][0].t - a[1][0].t);
+};
+
+const row = (key, head, list, showCat) => `<section class="row" data-row="${esc(key)}">
+    <div class="row-head">${head}</div>
+    <div class="row-view"><button class="nav prev" type="button" aria-label="Scroll left">${svg("left")}</button>
+    <div class="track">${list.map((it) => card(it, showCat)).join("")}</div>
+    <button class="nav next" type="button" aria-label="Scroll right">${svg("right")}</button></div></section>`;
+
+const renderHero = () => {
+    const hero = $("#hero");
+    const pick = LIVE.filter((it) => it.kind === "video" && it.art && !it.status).sort(SORTS.new)[0];
+    if (!pick || state.view !== "browse" || state.q) { hero.hidden = true; return; }
+    const c = catInfo(pick.cat);
+    const meta = [fmtDay(pick.t), fmtLong(pick.dur), pick.h ? `${pick.h}p${pick.fps ? Math.round(pick.fps) : ""}` : "", fmtBytes(pick.size)].filter(Boolean).join(" · ");
+    hero.innerHTML = `<img class="hero-art" src="${esc(pick.art)}" alt="">
+        <div class="hero-body"><span class="hero-kicker">${catIco(pick.cat, "sm")}Latest in ${esc(c.title)}</span>
+        <h2>${esc(pick.title)}</h2><div class="hero-meta">${esc(meta)}</div>
+        <div class="hero-actions"><button class="btn primary" data-play="${pick.i}">${svg("play")} ${pct(pick) > 1 ? "Resume" : "Play"}</button>
+        <button class="btn glass" data-cat-open="${esc(pick.cat)}">More ${esc(c.title)}</button>
+        <a class="btn glass" href="${esc(pick.href)}" download>${svg("download")} Download</a></div></div>`;
+    hero.hidden = false;
+};
+
+const renderBrowse = () => {
+    const out = [];
+    const cont = LIVE.filter((it) => { const p = pct(it); return p > 2 && p < 95; })
+        .sort((a, b) => (progress[b.href].at || 0) - (progress[a.href].at || 0));
+    if (cont.length) out.push(row("continue", `<h2>Continue watching</h2>`, cont, true));
+    const recent = LIVE.filter((it) => it.kind === "video").sort(SORTS.new).slice(0, 18);
+    if (recent.length) out.push(row("recent", `<h2>Recently recorded</h2>`, recent, true));
+    for (const [cat, list] of groupByCat(LIVE)) {
+        const c = catInfo(cat);
+        out.push(row(cat, `${catIco(cat)}<h2>${esc(c.title)}</h2><span class="count">${list.length}</span>
+            <button class="see-all" type="button" data-cat-open="${esc(cat)}">See all ${svg("right")}</button>`, list, false));
+    }
+    if (TRASH.length) {
+        out.push(row(CLEANUP, `<h2>${esc(catInfo(CLEANUP).title)}</h2><span class="count">${TRASH.length} · ${fmtBytes(TRASH.reduce((n, it) => n + it.size, 0))}</span>
+            <button class="see-all" type="button" data-cat-open="${esc(CLEANUP)}">See all ${svg("right")}</button>`, [...TRASH].sort(SORTS.new), true)
+            .replace('class="row"', 'class="row trash-row"'));
+    }
+    $("#browse").innerHTML = out.join("") || `<div class="empty">Nothing recorded yet.</div>`;
+    document.querySelectorAll(".row-view").forEach(updateNav);
+};
+const updateNav = (view) => {
+    const t = view.querySelector(".track");
+    view.querySelector(".prev").disabled = t.scrollLeft < 8;
+    view.querySelector(".next").disabled = t.scrollLeft + t.clientWidth > t.scrollWidth - 8;
+};
+
+const renderChips = () => {
+    const counts = new Map([["All", 0]]);
+    const kindCounts = new Map();
+    for (const it of ITEMS) {
+        if (!it.cleanup) counts.set("All", counts.get("All") + 1);
+        counts.set(it.cat, (counts.get(it.cat) || 0) + 1);
+        kindCounts.set(it.kind, (kindCounts.get(it.kind) || 0) + 1);
+    }
+    const cats = ["All", ...groupByCat(LIVE).map(([c]) => c), ...(TRASH.length ? [CLEANUP] : [])];
+    $("#cat-chips").innerHTML = cats.map((c) => `<button type="button" data-cat="${esc(c)}" class="${c === state.cat ? "active" : ""}">
+        ${c === "All" ? "All" : `${catIco(c, "sm")}${esc(catInfo(c).title)}`}
+        <span class="n">${counts.get(c)}</span></button>`).join("");
+    const KN = { video: "Videos", audio: "Audio", image: "Images", file: "Other" };
+    $("#kind-chips").innerHTML = kindCounts.size > 1 ? Object.keys(KN).filter((k) => kindCounts.has(k)).map((k) =>
+        `<button type="button" data-kind="${k}" class="${state.kinds.has(k) ? "active" : ""}">${KN[k]} <span class="n">${kindCounts.get(k)}</span></button>`).join("") : "";
+};
+
+const renderGrid = (list) => {
+    renderChips();
+    $("#grid").innerHTML = list.length ? list.map((it) => card(it, state.cat === "All")).join("") : `<div class="empty">No matches.</div>`;
+};
+
+const renderTable = (list) => {
+    const { k, dir } = state.tsort;
+    const val = (it) => k === "name" ? it.title : k === "cat" ? it.catTitle : k === "res" ? it.w * it.h : it[k] || 0;
+    list = [...list].sort((a, b) => { const x = val(a), y = val(b); return (typeof x === "string" ? x.localeCompare(y, undefined, { numeric: true }) : x - y) * dir; });
+    document.querySelectorAll("#file-table th").forEach((th) => { th.classList.toggle("asc", th.dataset.k === k && dir > 0); th.classList.toggle("desc", th.dataset.k === k && dir < 0); });
+    $(".sel").hidden = !IS_OWNER;
+    shownStems = list.map((it) => it.stem);
+    $("#file-table tbody").innerHTML = list.map((it) => `<tr data-i="${it.i}" class="${selected.has(it.stem) ? "picked" : ""}">
+        ${IS_OWNER ? `<td class="sel"><input type="checkbox" data-stem="${esc(it.stem)}" ${selected.has(it.stem) ? "checked" : ""} aria-label="Select"></td>` : ""}
+        <td class="name">${it.art && it.kind !== "audio" ? `<img loading="lazy" src="${esc(it.art)}" alt="">` : ""}<span>${esc(it.title)}</span>${it.status ? `<span class="status-tag">${it.status === "converting" ? "Converting" : "Queued"}</span>` : ""}</td>
+        <td><span class="cat-tag">${catIco(it.cat, "sm")} ${esc(it.catTitle)}</span></td><td>${fmtDur(it.dur)}</td>
+        <td class="optional">${it.w ? `${it.w}×${it.h}` : ""}</td><td class="optional">${it.fps ? Math.round(it.fps) : ""}</td>
+        <td>${fmtBytes(it.size)}</td><td>${fmtDay(it.t)} ${timeFmt.format(new Date(it.t))}</td>
+        <td class="more-col">${moreBtn(it)}</td></tr>`).join("")
+        || `<tr><td colspan="9" class="empty">No matches.</td></tr>`;
+    updateBulk();
+};
+
+// ---- Cleanup (owner only): moves recordings into the cleanup folder, or back -------------------
+const selected = new Set();
+let shownStems = [];
+const updateBulk = () => {
+    const n = selected.size;
+    $("#bulk").hidden = !IS_OWNER || !n;
+    $("#bulk-count").textContent = `${n} selected`;
+    const picked = ITEMS.filter((it) => selected.has(it.stem));
+    $(".bulk-actions").innerHTML = [
+        picked.some((it) => !it.cleanup) ? iconBtn("trash", "Mark selected for cleanup", 'data-bulk="mark"', "danger") : "",
+        picked.some((it) => it.cleanup) ? iconBtn("restore", "Restore selected", 'data-bulk="restore"') : "",
+        iconBtn("x", "Clear selection", 'data-bulk="clear"')
+    ].join("");
+    const all = $("#sel-all");
+    const shownPicked = shownStems.filter((s) => selected.has(s)).length;
+    all.checked = shownStems.length > 0 && shownPicked === shownStems.length;
+    all.indeterminate = shownPicked > 0 && shownPicked < shownStems.length;
+};
+const cleanupAction = async (stems, action) => {
+    if (!stems.length) return;
+    try {
+        const r = await fetch("/__api/cleanup", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stems, action })
         });
-    });
+        const j = await r.json().catch(() => ({}));
+        const failed = (j.results || []).filter((x) => x.error);
+        if (failed.length) alert(`${failed.length} of ${stems.length} could not be ${action === "mark" ? "marked" : "restored"}:\n` + failed.map((f) => `${f.stem}: ${f.error}`).join("\n"));
+        else if (!r.ok) alert(`Failed: HTTP ${r.status}`);
+    } catch (e) {
+        alert(`Failed: ${e.message}`);
+    }
+    location.reload();
 };
 
-const categoryInit = () => {
-    const counts = new Map([["All", rows().length]]);
-    rows().forEach(row => {
-        const cat = row.dataset.cat || "Uncategorized";
-        counts.set(cat, (counts.get(cat) || 0) + 1);
-    });
-    const cats = Array.from(counts.keys()).sort((a, b) => a === "All" ? -1 : b === "All" ? 1 : a.localeCompare(b));
-    const wrap = document.getElementById("category-row");
-    wrap.innerHTML = cats.map(cat => `<button type="button" data-cat="${cat.replace(/"/g, "&quot;")}" class="${cat === activeCategory ? "active" : ""}">${cat} · ${counts.get(cat)}</button>`).join("");
-    wrap.addEventListener("click", (e) => {
-        const btn = e.target.closest("button[data-cat]");
-        if (!btn) return;
-        activeCategory = btn.dataset.cat;
-        wrap.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === btn));
-        applyFilter();
-    });
+const render = () => {
+    stopPreview();
+    const view = state.q && state.view === "browse" ? "grid" : state.view;
+    document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
+    const list = ITEMS.filter(matches).sort(SORTS[state.sort]);
+    const shown = view === "browse" ? LIVE.length : list.length;
+    $("#result-count").textContent = `${shown} item${shown === 1 ? "" : "s"}`;
+    $("#browse").hidden = view !== "browse";
+    $("#library").hidden = view !== "grid";
+    $("#table-wrap").hidden = view !== "table";
+    renderHero();
+    if (view === "browse") renderBrowse();
+    else if (view === "grid") renderGrid(list);
+    else renderTable(list);
 };
 
-const buildGrid = () => {
-    const wrap = document.getElementById("grid-wrap");
-    const visibleRows = rows().filter(row => row.style.display !== "none");
-    wrap.innerHTML = visibleRows.map(row => {
-        const d = rowData(row);
-        const thumb = d.thumb ? `<img src="${d.thumb}" alt="">` : `<span>${d.ext.toUpperCase()}</span>`;
-        const meta = [d.cat, d.duration, d.resolution, d.size].filter(Boolean).join(" · ");
-        return `<article class="video-card" data-href="${d.href}"><div class="card-thumb">${thumb}<span class="card-badge">${d.ext}</span></div><h2>${d.name}</h2><div class="card-meta">${meta}</div><div class="card-actions"><a href="${d.href}" class="play-link">Play</a><a href="${d.href}" download>Download</a></div></article>`;
-    }).join("");
-};
+// ---- Player -----------------------------------------------------------------------------------
+const player = {
+    el: $("#player"), video: $("#player-video"), img: $("#player-img"), item: null, lastSave: 0,
+    open(it) {
+        if (it.kind === "file") { location.href = it.href; return; }
+        stopPreview();
+        this.item = it;
+        $("#player-title").textContent = it.title;
 
-const overlay = {
-    el: null,
-    video: null,
-    closeBtn: null,
-    open: (src) => {
-        overlay.video.src = src;
-        overlay.el.classList.add("active");
-        overlay.el.setAttribute("aria-hidden", "false");
-        overlay.video.play().catch(() => {});
+        $("#player-sub").textContent = [it.catTitle, fmtDay(it.t), fmtLong(it.dur), fmtBytes(it.size)].filter(Boolean).join(" · ");
+        renderPlayerActions();
+        this.el.classList.add("active");
+        this.el.setAttribute("aria-hidden", "false");
+        const isImg = it.kind === "image";
+        this.img.hidden = !isImg; this.video.hidden = isImg;
+        if (isImg) { this.img.src = it.href; return; }
+        this.video.poster = it.kind === "audio" ? "" : it.art || "";
+        this.video.src = it.href;
+        this.video.play().catch(() => {});
     },
-    close: () => {
-        overlay.video.pause();
-        overlay.video.removeAttribute("src");
-        overlay.video.load();
-        overlay.el.classList.remove("active");
-        overlay.el.setAttribute("aria-hidden", "true");
+    save(force) {
+        const it = this.item, v = this.video;
+        if (!it || it.kind === "image" || !v.duration || !isFinite(v.duration)) return;
+        if (!force && Date.now() - this.lastSave < 4000) return;
+        this.lastSave = Date.now();
+        if (v.currentTime / v.duration > 0.95) delete progress[it.href];
+        else if (v.currentTime > 5) progress[it.href] = { t: Math.round(v.currentTime), d: Math.round(v.duration), at: Date.now() };
+        store.set("obs-progress", progress);
     },
-    init: () => {
-        overlay.el = document.getElementById("video-overlay");
-        overlay.video = document.getElementById("overlay-video");
-        overlay.closeBtn = document.getElementById("overlay-close");
-        overlay.el.addEventListener("click", (e) => {
-            if (e.target === overlay.el) overlay.close();
+    close() {
+        if (!this.item) return;
+        this.save(true);
+        this.video.pause();
+        this.video.removeAttribute("src");
+        this.video.load();
+        this.img.removeAttribute("src");
+        this.el.classList.remove("active");
+        this.el.setAttribute("aria-hidden", "true");
+        this.item = null;
+        render();
+    },
+    init() {
+        this.video.addEventListener("loadedmetadata", () => {
+            const p = this.item && progress[this.item.href];
+            if (p && p.t > 10 && p.t < this.video.duration - 10) this.video.currentTime = p.t;
         });
-        overlay.closeBtn.addEventListener("click", overlay.close);
+        this.video.addEventListener("timeupdate", () => this.save(false));
+        this.video.addEventListener("ended", () => this.save(true));
+        this.el.addEventListener("click", (e) => { if (e.target === this.el) this.close(); });
+
         document.addEventListener("keydown", (e) => {
-            if (e.key === "Escape") overlay.close();
+            if (e.key !== "Escape" || $("#rename-dialog").open) return;
+            if (!$("#menu").hidden) return closeMenu();
+            this.close();
         });
+        addEventListener("pagehide", () => this.save(true));
     }
 };
 
-const thumbToPlayerInit = () => {
-    document.addEventListener("click", (e) => {
-        const play = e.target.closest(".play-link");
-        if (play) {
-            e.preventDefault();
-            overlay.open(play.href);
-            return;
-        }
-        const card = e.target.closest(".video-card");
-        if (card && !e.target.closest("a")) overlay.open(card.dataset.href);
-        const thumbLink = e.target.closest("td .thumb");
-        if (thumbLink) {
-            const a = thumbLink.closest("a");
-            if (!a) return;
-            e.preventDefault();
-            overlay.open(a.href);
-        }
-    });
+// ---- Item actions: shared by the ⋯ menu and the player toolbar --------------------------------------
+const iconBtn = (icon, label, attrs = "", cls = "") =>
+    `<button type="button" class="icon-btn ${cls}" ${attrs} aria-label="${esc(label)}" title="${esc(label)}">${svg(icon)}</button>`;
+const files = (it) => [{ ext: it.ext, href: it.href }, ...it.alts];
+const shareLink = (it) => {
+    const base = DATA.basePath || "/";
+    const rel = it.href.startsWith(base) ? it.href.slice(base.length) : it.href.replace(/^\//, "");
+    return (DATA.shareBase || location.origin + "/") + rel;
+};
+const copyLink = async (it, btn) => {
+    const url = shareLink(it);
+    try { await navigator.clipboard.writeText(url); } catch { prompt("Link", url); return; }
+    if (btn) { const old = btn.innerHTML; btn.innerHTML = svg("check"); btn.classList.add("ok"); setTimeout(() => { btn.innerHTML = old; btn.classList.remove("ok"); }, 1500); }
+};
+const runAction = (action, it, btn) => {
+    if (action === "play") return player.open(it);
+    if (action === "rename") return renameDialog(it);
+    if (action === "copy") return copyLink(it, btn);
+    if (action === "cleanup") { player.close(); return cleanupAction([it.stem], it.cleanup ? "restore" : "mark"); }
 };
 
-const shareInit = () => {
-    const btn = document.getElementById("share-link");
-    if (!btn) return;
-    const shareUrl = btn.dataset.shareUrl;
-    btn.addEventListener("click", async () => {
+const renderPlayerActions = () => {
+    const it = player.item;
+    if (!it) return;
+    const dl = files(it).map((f) => `<a class="icon-btn" href="${esc(f.href)}" download aria-label="Download .${esc(f.ext)}" title="Download .${esc(f.ext)}">${svg("download")}</a>`);
+    $("#player-actions").innerHTML = [
+        IS_OWNER ? iconBtn("pencil", "Rename", 'data-act="rename"') : "",
+        iconBtn("link", "Copy link", 'data-act="copy"'),
+        dl[0] || "",
+        IS_OWNER ? (it.cleanup ? iconBtn("restore", "Restore from cleanup", 'data-act="cleanup"') : iconBtn("trash", "Mark for cleanup", 'data-act="cleanup"', "danger")) : "",
+        iconBtn("x", "Close", 'data-act="close"')
+    ].join("");
+};
+
+let menuFor = null;
+const closeMenu = () => {
+    const m = $("#menu");
+    if (m.hidden) return;
+    m.hidden = true;
+    if (menuFor) { menuFor.setAttribute("aria-expanded", "false"); menuFor.focus({ preventScroll: true }); }
+    menuFor = null;
+};
+const openMenu = (btn) => {
+    const it = ITEMS[btn.dataset.menu];
+    if (!it) return;
+    if (menuFor === btn) return closeMenu();
+    closeMenu();
+    stopPreview();
+    const entry = (icon, label, act, cls = "", sub = "") =>
+        `<button type="button" role="menuitem" data-act="${act}" class="${cls}">${svg(icon)}<span>${esc(label)}</span>${sub ? `<span class="menu-sub">${esc(sub)}</span>` : ""}</button>`;
+    const fs = files(it);
+    const m = $("#menu");
+    m.innerHTML = [
+        it.kind !== "file" ? entry("play", "Play", "play") : "",
+        IS_OWNER ? entry("pencil", "Rename", "rename") : "",
+        ...fs.map((f, n) => `<a role="menuitem" href="${esc(f.href)}" download>${svg("download")}<span>Download${fs.length > 1 ? ` .${esc(f.ext)}` : ""}</span>${n === 0 ? `<span class="menu-sub">${fmtBytes(it.size)}</span>` : ""}</a>`),
+        entry("link", "Copy link", "copy"),
+        `<a role="menuitem" href="${esc(it.href)}" target="_blank" rel="noopener">${svg("external")}<span>Open in new tab</span></a>`,
+        IS_OWNER ? "<hr>" + (it.cleanup ? entry("restore", "Restore from cleanup", "cleanup") : entry("trash", "Mark for cleanup", "cleanup", "danger")) : ""
+    ].join("");
+    m.dataset.i = it.i;
+    m.hidden = false;
+    // Position under the ⋯ button, flipping up/left when it would leave the viewport.
+    const r = btn.getBoundingClientRect(), mw = m.offsetWidth, mh = m.offsetHeight;
+    const left = Math.max(8, Math.min(r.right - mw, innerWidth - mw - 8));
+    const top = r.bottom + 6 + mh > innerHeight - 8 ? Math.max(8, r.top - mh - 6) : r.bottom + 6;
+    m.style.left = `${left}px`; m.style.top = `${top}px`;
+    btn.setAttribute("aria-expanded", "true");
+    menuFor = btn;
+    const first = m.querySelector("button, a");
+    if (first) first.focus({ preventScroll: true });
+};
+
+const renameDialog = (it) => {
+    if (!IS_OWNER) return;
+    const dlg = $("#rename-dialog"), input = $("#rename-input");
+    input.value = it.custom || it.title;
+    dlg.querySelector('[data-dlg="reset"]').hidden = !it.custom;
+    dlg.onclick = (e) => {
+        const b = e.target.closest("[data-dlg]");
+        if (e.target === dlg || (b && b.dataset.dlg === "cancel")) dlg.close();
+        if (b && b.dataset.dlg === "reset") save("");
+    };
+    const save = async (title) => {
         try {
-            await navigator.clipboard.writeText(shareUrl);
-            btn.textContent = "Copied";
-            btn.classList.add("copied");
-            setTimeout(() => {
-                btn.textContent = "Share";
-                btn.classList.remove("copied");
-            }, 1800);
-        } catch {
-            window.prompt("Share link", shareUrl);
+            const r = await fetch("/__api/title", {
+                method: "POST", credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ stem: it.stem, title })
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const j = await r.json();
+            it.custom = j.title || undefined;
+            it.title = titleOf(it);
+            dlg.close();
+            if (player.item === it) $("#player-title").textContent = it.title;
+            else render();
+        } catch (e) {
+            alert(`Rename failed: ${e.message}`);
         }
-    });
+    };
+    $("#rename-form").onsubmit = (e) => { e.preventDefault(); save(input.value.trim()); };
+    dlg.showModal();
+    input.focus(); input.select();
 };
 
-document.addEventListener("DOMContentLoaded", () => {
-    const filt = document.getElementById("filters");
-    if (filt) filt.addEventListener("change", applyFilter);
-    const search = document.getElementById("file-search");
-    if (search) search.addEventListener("input", applyFilter);
-    document.getElementById("grid-view").addEventListener("click", () => {
-        document.body.classList.remove("show-table");
-        document.getElementById("grid-view").classList.add("active");
-        document.getElementById("table-view").classList.remove("active");
-    });
-    document.getElementById("table-view").addEventListener("click", () => {
-        document.body.classList.add("show-table");
-        document.getElementById("table-view").classList.add("active");
-        document.getElementById("grid-view").classList.remove("active");
-    });
-    categoryInit();
-    applyFilter();
-    sortInit();
-    overlay.init();
-    thumbToPlayerInit();
-    shareInit();
+// ---- Wiring -----------------------------------------------------------------------------------
+const setView = (v) => {
+    state.view = v; store.set("obs-view", v);
+    if (v !== "grid" && location.hash) history.replaceState(null, "", location.pathname + location.search);
+    render();
+};
+const openCat = (cat) => {
+    state.cat = cat; state.q = ""; $("#q").value = "";
+    history.replaceState(null, "", `#c/${encodeURIComponent(cat)}`);
+    setView("grid"); scrollTo({ top: 0, behavior: "smooth" });
+};
+
+document.addEventListener("click", (e) => {
+    const t = e.target;
+    const mb = t.closest("[data-menu]");
+    if (mb) { e.stopPropagation(); return openMenu(mb); }
+    const inMenu = t.closest("#menu");
+    if (inMenu) {
+        const act = t.closest("[data-act]");
+        const it = ITEMS[inMenu.dataset.i];
+        if (act || t.closest("a")) { closeMenu(); menuFor = null; }
+        if (act && it) runAction(act.dataset.act, it, act);
+        return;
+    }
+    closeMenu();
+    const pa = t.closest("#player-actions [data-act]");
+    if (pa) return pa.dataset.act === "close" ? player.close() : runAction(pa.dataset.act, player.item, pa);
+    const btn = t.closest("[data-view]");
+    if (btn) return setView(btn.dataset.view);
+    const co = t.closest("[data-cat-open]");
+    if (co) return openCat(co.dataset.catOpen);
+    const pl = t.closest("[data-play]");
+    if (pl) return player.open(ITEMS[pl.dataset.play]);
+    const chip = t.closest("#cat-chips [data-cat]");
+    if (chip) return openCat(chip.dataset.cat);
+    const kc = t.closest("#kind-chips [data-kind]");
+    if (kc) { const k = kc.dataset.kind; state.kinds.has(k) ? state.kinds.delete(k) : state.kinds.add(k); return render(); }
+    const nav = t.closest(".nav");
+    if (nav) { const tr = nav.parentElement.querySelector(".track"); tr.scrollBy({ left: (nav.classList.contains("next") ? 1 : -1) * tr.clientWidth * 0.9, behavior: "smooth" }); return; }
+    const th = t.closest("#file-table th[data-k]");
+    if (th) { const k = th.dataset.k; state.tsort = { k, dir: state.tsort.k === k ? -state.tsort.dir : (k === "name" || k === "cat" ? 1 : -1) }; return render(); }
+    const bulk = t.closest("[data-bulk]");
+    if (bulk) {
+        const a = bulk.dataset.bulk;
+        if (a === "clear") { selected.clear(); return render(); }
+        return cleanupAction([...selected], a);
+    }
+    if (t.closest("a, .sel")) return;
+    const c = t.closest(".card, #file-table tbody tr[data-i]");
+    if (c) player.open(ITEMS[c.dataset.i]);
 });
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches(".card")) player.open(ITEMS[e.target.dataset.i]);
+    if (!$("#menu").hidden && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        const items = [...$("#menu").querySelectorAll("button, a")];
+        const i = items.indexOf(document.activeElement);
+        items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+    }
+    if (e.key === "/" && document.activeElement !== $("#q") && !player.item) { e.preventDefault(); $("#q").focus(); }
+});
+addEventListener("resize", closeMenu);
+document.addEventListener("scroll", (e) => { if (!(e.target.closest && e.target.closest("#menu"))) closeMenu(); }, true);
+document.addEventListener("scroll", (e) => { if (e.target.classList && e.target.classList.contains("track")) updateNav(e.target.parentElement); }, true);
+$("#q").addEventListener("input", (e) => { state.q = e.target.value.trim().toLowerCase(); render(); });
+$("#sort").addEventListener("change", (e) => { state.sort = e.target.value; render(); });
+$("#file-table").addEventListener("change", (e) => {
+    const box = e.target;
+    if (box.id === "sel-all") {
+        shownStems.forEach((s) => (box.checked ? selected.add(s) : selected.delete(s)));
+        return render();
+    }
+    if (!box.dataset.stem) return;
+    box.checked ? selected.add(box.dataset.stem) : selected.delete(box.dataset.stem);
+    box.closest("tr").classList.toggle("picked", box.checked);
+    updateBulk();
+});
+
+const share = $("#share-link");
+share.addEventListener("click", async () => {
+    try {
+        await navigator.clipboard.writeText(share.dataset.shareUrl);
+        share.textContent = "Copied"; share.classList.add("copied");
+        setTimeout(() => { share.textContent = "Share"; share.classList.remove("copied"); }, 1800);
+    } catch { prompt("Share link", share.dataset.shareUrl); }
+});
+
+if (!["browse", "grid", "table"].includes(state.view)) state.view = "browse";
+player.init();
+hoverInit();
+const fromHash = /^#c\/(.+)$/.exec(location.hash);
+if (fromHash) { state.cat = decodeURIComponent(fromHash[1]); state.view = "grid"; }
+render();
+})();
 </script>

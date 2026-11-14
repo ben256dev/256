@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-const { execFileSync, execFile } = require("child_process");
-const crypto = require("crypto");
+const { execFileSync } = require("child_process");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
@@ -8,13 +7,15 @@ const https = require("https");
 const express = require("express");
 const cors = require("cors");
 const io = require("@pm2/io");
+const { createMedia, extOf, stemOf, kindOf, VIDEO_PRIORITY, SPRITE_FRAMES } = require("./media");
+const { createIcons } = require("./icons");
 
 const OBS_DIR = process.env.OBS_DIR || ".";
 const PORT = Number(process.env.PORT || 8000);
 const HOST = "0.0.0.0";
 const FINGERPRINT_CMD = process.env.FINGERPRINT_CMD;
-const THUMB_TIME = process.env.THUMB_TIME || "00:00:03";
 const BODY_FILE = path.join(__dirname, "views", "body_table.html");
+const CATEGORIES_FILE = process.env.CATEGORIES_FILE || path.join(__dirname, "categories.json");
 const CSS_URL = process.env.DARKMODE_CSS || "https://ben256.com/darkmode.css";
 const OWNER_EMAILS = (process.env.OWNER_EMAILS || process.env.OWNER_EMAIL || "benjamin@ben256.com")
     .split(",")
@@ -23,6 +24,10 @@ const OWNER_EMAILS = (process.env.OWNER_EMAILS || process.env.OWNER_EMAIL || "be
 const SSO_SESSION_URL = process.env.SSO_SESSION_URL || "https://www.ben256.com/api/session";
 const SSO_LOGIN_URL = process.env.SSO_LOGIN_URL || "https://www.ben256.com/auth/google/start";
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+// Recordings marked for cleanup are moved under this top-level folder, keeping their original
+// relative path, so backups can exclude one directory and restoring is exact.
+const CLEANUP_DIR = (process.env.CLEANUP_DIR || "_cleanup").replace(/[\\/.]/g, "") || "_cleanup";
+const AUTO_REMUX = process.env.AUTO_REMUX !== "0";
 
 if (!FINGERPRINT_CMD) {
     console.error("FINGERPRINT_CMD not set in environment");
@@ -46,9 +51,38 @@ const app = express();
 app.disable("x-powered-by");
 
 const root = path.resolve(OBS_DIR);
-const THUMB_DIR = path.join(root, ".thumbs");
+const ART_DIR = path.join(root, ".thumbs");
+const ICON_DIR = path.join(root, ".icons");
+const META_FILE = path.join(root, ".obs_meta.json");
 const mount = `/${key}`;
 const staticMount = `${mount}/`;
+
+const media = createMedia({
+    root,
+    artDir: ART_DIR,
+    log: (msg) => console.log(`[media] ${msg}`),
+    ffmpegJobs: Number(process.env.FFMPEG_JOBS || 3),
+    remuxMinAgeSec: Number(process.env.REMUX_MIN_AGE_SEC || 90),
+    autoRemux: AUTO_REMUX,
+    // Don't spend disk on converting footage that is already marked for cleanup.
+    skipRemux: (rel) => inCleanup(rel)
+});
+
+const icons = createIcons({ iconDir: ICON_DIR, log: (msg) => console.log(`[icons] ${msg}`) });
+
+// Owner-set display names, keyed by the recording's path without extension so a name survives
+// MKV→MP4 remuxing. Stored beside the media (hidden file, never served statically).
+let meta = { titles: {}, cleanup: {} };
+try {
+    meta = { titles: {}, cleanup: {}, ...JSON.parse(fs.readFileSync(META_FILE, "utf8")) };
+} catch (err) {
+    if (err.code !== "ENOENT") console.warn("could not read", META_FILE, err.message);
+}
+const saveMeta = async () => {
+    const tmp = `${META_FILE}.${process.pid}.tmp`;
+    await fsp.writeFile(tmp, JSON.stringify(meta, null, 2));
+    await fsp.rename(tmp, META_FILE);
+};
 
 app.use(staticMount, cors());
 
@@ -60,7 +94,7 @@ const hiddenGuard = (req, res, next) => {
     next();
 };
 
-const walkFiles = async (base) => {
+const walkFiles = async (base = root) => {
     const out = [];
     const stack = [{ abs: base, rel: "" }];
     while (stack.length) {
@@ -86,22 +120,17 @@ const categorize = (relPath) => {
     return parts[0];
 };
 
-const extOf = (filename) => {
-    const i = filename.lastIndexOf(".");
-    if (i <= 0 || i === filename.length - 1) return "";
-    return filename.slice(i + 1).toLowerCase();
-};
+const inCleanup = (rel) => rel.startsWith(`${CLEANUP_DIR}/`);
+const originalRel = (rel) => (inCleanup(rel) ? rel.slice(CLEANUP_DIR.length + 1) : rel);
 
 const hasFile = async (absPath) => {
     try {
-        await fsp.access(absPath, fs.constants.ROK);
+        await fsp.access(absPath, fs.constants.R_OK);
         return true;
     } catch {
         return false;
     }
 };
-
-const videoExts = new Set(["mp4", "mkv", "mov", "webm", "m4v"]);
 
 const encodeRel = (rel) => Buffer.from(rel, "utf8").toString("base64url");
 
@@ -122,136 +151,128 @@ const safeRelPath = (rel) => {
     return abs;
 };
 
-const generatedThumbPath = (rel) => {
-    const hash = crypto.createHash("sha1").update(rel).digest("hex");
-    return path.join(THUMB_DIR, `${hash}-480x270.jpg`);
+// OBS default filenames ("2025-08-19_20-45-59" / "2026-11-12 23-36-51") carry the recording start time.
+const recordedAt = (name, fallbackMs) => {
+    const m = /(\d{4})-(\d{2})-(\d{2})[ _T](\d{2})-(\d{2})-(\d{2})/.exec(name);
+    if (!m) return fallbackMs;
+    const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+    return isNaN(d) ? fallbackMs : d.getTime();
 };
 
-const ensureGeneratedThumb = (abs, rel) =>
-    new Promise((resolve) => {
-        const out = generatedThumbPath(rel);
-        fsp.access(out, fs.constants.ROK)
-            .then(() => resolve(out))
-            .catch(async () => {
-                try {
-                    await fsp.mkdir(THUMB_DIR, { recursive: true });
-                } catch {
-                    resolve("");
-                    return;
-                }
-                execFile(
-                    "ffmpeg",
-                    [
-                        "-hide_banner",
-                        "-loglevel",
-                        "error",
-                        "-ss",
-                        THUMB_TIME,
-                        "-i",
-                        abs,
-                        "-frames:v",
-                        "1",
-                        "-vf",
-                        "scale=480:270:force_original_aspect_ratio=decrease,pad=480:270:(ow-iw)/2:(oh-ih)/2",
-                        "-y",
-                        out
-                    ],
-                    { timeout: 30000 },
-                    (err) => resolve(err ? "" : out)
-                );
-            });
-    });
-
-const fmtDuration = (seconds) => {
-    if (!isFinite(seconds) || seconds < 0) return "";
-    const s = Math.floor(seconds);
-    const hh = String(Math.floor(s / 3600)).padStart(2, "0");
-    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
-    const ss = String(s % 60).padStart(2, "0");
-    return `${hh}:${mm}:${ss}`;
-};
-
-const fmtBytes = (n) => {
-    if (!Number.isFinite(n) || n < 0) return "";
-    const units = ["B", "KB", "MB", "GB", "TB"];
-    let i = 0;
-    let x = n;
-    while (x >= 1024 && i < units.length - 1) {
-        x /= 1024;
-        i++;
-    }
-    return `${x.toFixed(x < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
-};
-
-const fmtDate = (d) => {
+const loadCategories = () => {
     try {
-        return new Date(d).toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
-    } catch {
-        return "";
+        return JSON.parse(fs.readFileSync(CATEGORIES_FILE, "utf8"));
+    } catch (err) {
+        if (err.code !== "ENOENT") console.warn("categories.json unreadable:", err.message);
+        return {};
     }
 };
 
-const parseFps = (s) => {
-    if (!s) return "";
-    const parts = String(s).split("/");
-    if (parts.length === 2) {
-        const a = Number(parts[0]);
-        const b = Number(parts[1]);
-        if (a > 0 && b > 0) return (a / b).toFixed(2);
+// Collapse recordings that exist in several containers (OBS .mkv + remuxed .mp4, plus legacy
+// sidecar .jpg thumbnails) into one item that plays the most browser-friendly file.
+const buildItems = async (files) => {
+    const videoGroups = new Map();
+    for (const rel of files) {
+        if (kindOf(extOf(rel)) !== "video") continue;
+        const stem = stemOf(rel);
+        if (!videoGroups.has(stem)) videoGroups.set(stem, []);
+        videoGroups.get(stem).push(rel);
     }
-    const v = Number(s);
-    if (isFinite(v) && v > 0) return v.toFixed(2);
-    return "";
-};
-
-const videoMetaCache = new Map();
-
-const ffprobeMeta = (abs, cacheKey) =>
-    new Promise((resolve) => {
-        if (videoMetaCache.has(cacheKey)) return resolve(videoMetaCache.get(cacheKey));
-        execFile(
-            "ffprobe",
-            [
-                "-v",
-                "error",
-                "-print_format",
-                "json",
-                "-show_entries",
-                "format=duration:stream=codec_type,width,height,avg_frame_rate",
-                abs
-            ],
-            { encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
-            (err, stdout) => {
-                if (err) {
-                    const empty = { duration: "", width: "", height: "", fps: "" };
-                    videoMetaCache.set(cacheKey, empty);
-                    return resolve(empty);
-                }
-                let j;
+    const seen = new Set();
+    const tasks = [];
+    for (const rel of files) {
+        const ext = extOf(rel);
+        const kind = kindOf(ext);
+        const stem = stemOf(rel);
+        if (kind === "image" && videoGroups.has(stem)) continue;
+        let primary = rel;
+        let alts = [];
+        if (kind === "video") {
+            if (seen.has(stem)) continue;
+            seen.add(stem);
+            const group = videoGroups.get(stem);
+            group.sort((a, b) => VIDEO_PRIORITY.indexOf(extOf(a)) - VIDEO_PRIORITY.indexOf(extOf(b)));
+            [primary, ...alts] = group;
+        }
+        tasks.push(
+            (async () => {
+                const abs = path.join(root, primary);
+                let st;
                 try {
-                    j = JSON.parse(stdout);
+                    st = await fsp.stat(abs);
                 } catch {
-                    const empty = { duration: "", width: "", height: "", fps: "" };
-                    videoMetaCache.set(cacheKey, empty);
-                    return resolve(empty);
+                    return null;
                 }
-                let duration = "";
-                let width = "";
-                let height = "";
-                let fps = "";
-                if (j && j.format && j.format.duration) duration = fmtDuration(Number(j.format.duration));
-                if (Array.isArray(j.streams)) {
-                    const v = j.streams.find((s) => s.codec_type === "video") || {};
-                    if (v.width) width = String(v.width);
-                    if (v.height) height = String(v.height);
-                    if (v.avg_frame_rate) fps = parseFps(v.avg_frame_rate);
-                }
-                const out = { duration, width, height, fps };
-                videoMetaCache.set(cacheKey, out);
-                resolve(out);
-            }
+                const pext = extOf(primary);
+                const meta = kind === "video" || kind === "audio" ? await media.probe(abs, st.mtimeMs) : {};
+                const name = primary.slice(primary.lastIndexOf("/") + 1);
+                return {
+                    rel: primary,
+                    stem,
+                    kind,
+                    ext: pext,
+                    name,
+                    cat: categorize(primary),
+                    cleanup: inCleanup(primary),
+                    origCat: categorize(originalRel(primary)),
+                    alts,
+                    size: st.size,
+                    mtime: st.mtimeMs,
+                    t: recordedAt(name, st.mtimeMs),
+                    durationSec: meta.duration || 0,
+                    width: meta.width || 0,
+                    height: meta.height || 0,
+                    fps: meta.fps || 0,
+                    coverArt: Boolean(meta.coverArt)
+                };
+            })()
         );
-    });
+    }
+    return (await Promise.all(tasks)).filter(Boolean);
+};
+
+const hrefFor = (basePath, rel) => {
+    const href = `${basePath}${rel.split("/").map(encodeURIComponent).join("/")}`;
+    return href.startsWith("/") ? href : `/${href}`;
+};
+const artHref = (basePath, kind, rel, ext) => `${basePath}__art/${kind}/${encodeRel(rel)}.${ext}?v=2`;
+
+const clientItem = (it, basePath) => {
+    const out = {
+        stem: it.stem,
+        name: it.name,
+        cat: it.cat,
+        kind: it.kind,
+        ext: it.ext,
+        href: hrefFor(basePath, it.rel),
+        alts: it.alts.map((rel) => ({ ext: extOf(rel), href: hrefFor(basePath, rel) })),
+        size: it.size,
+        t: it.t,
+        dur: Math.round(it.durationSec),
+        w: it.width,
+        h: it.height,
+        fps: it.fps
+    };
+    if (meta.titles[it.stem]) out.custom = meta.titles[it.stem];
+    if (it.cleanup) {
+        out.cleanup = true;
+        out.origCat = it.origCat;
+        if (meta.cleanup[it.stem]) out.markedAt = meta.cleanup[it.stem].at;
+    }
+    if (it.kind === "video") {
+        out.art = artHref(basePath, "poster", it.rel, "jpg");
+        if (it.durationSec > 1) out.sprite = artHref(basePath, "sprite", it.rel, "jpg");
+        if (it.ext === "mkv") {
+            out.status = media.status(it.stem) || (media.isQueued(it.rel) ? "queued" : "");
+        }
+    } else if (it.kind === "audio") {
+        out.art = artHref(basePath, "wave", it.rel, "png").replace("?v=2", "?v=3");
+        out.cover = it.coverArt;
+    } else if (it.kind === "image") {
+        out.art = out.href;
+    }
+    return out;
+};
 
 const fetchTemplate = (url) =>
     new Promise((resolve, reject) => {
@@ -362,6 +383,9 @@ $body$
 </body>
 </html>`;
 
+// Function replacers so "$&", "$'" etc. in file names or page content are inserted literally.
+const lit = (s) => () => s || "";
+
 const renderWithTemplate = async (bodyHtml, title, cssUrl, footerHtml, baseHref) => {
     let tpl;
     try {
@@ -371,105 +395,140 @@ const renderWithTemplate = async (bodyHtml, title, cssUrl, footerHtml, baseHref)
         tpl = fallbackTemplate;
     }
     const ifCssRe = /\$if\(css\)\$[\s\S]*?\$endif\$/g;
-    let out = tpl.replace(ifCssRe, `<link rel="stylesheet" href="${cssUrl}">`)
-        .replace(/\$title\$/g, title || "")
-        .replace(/\$css\$/g, cssUrl || "")
-        .replace(/\$body\$/g, bodyHtml || "")
-        .replace(/\$footer-content\$/g, footerHtml || "");
-    out = out.replace(/<head>/i, `<head><base href="${baseHref || "/"}">`);
+    let out = tpl.replace(ifCssRe, lit(`<link rel="stylesheet" href="${cssUrl}">`))
+        .replace(/\$title\$/g, lit(title))
+        .replace(/\$css\$/g, lit(cssUrl))
+        .replace(/\$body\$/g, lit(bodyHtml))
+        .replace(/\$footer-content\$/g, lit(footerHtml));
+    out = out.replace(/<head>/i, lit(`<head><base href="${baseHref || "/"}">`));
     return out;
 };
 
 const renderIndex = async (req, res, basePath, isOwner) => {
     try {
         const [files, bodyTpl] = await Promise.all([walkFiles(root), fsp.readFile(BODY_FILE, "utf8")]);
-        const exts = new Set();
-        const rows = [];
-        const tasks = files.map(async (rel) => {
-            const name = rel.substring(rel.lastIndexOf("/") + 1);
-            const hrefPath = rel.split("/").map(encodeURIComponent).join("/");
-            let href = `${basePath}${hrefPath}`;
-            if (!href.startsWith("/")) href = `/${href}`;
-            const cat = categorize(rel);
-            const ext = extOf(name);
-            if (ext) exts.add(ext);
-            const abs = path.join(root, rel);
-            let stat;
-            try {
-                stat = await fsp.stat(abs);
-            } catch {
-                return;
-            }
-            let thumbHref = "";
-            if (videoExts.has(ext)) {
-                const thumbRel = rel.replace(/\.[^/.]+$/, ".jpg");
-                const absThumb = path.join(root, thumbRel);
-                if (await hasFile(absThumb)) {
-                    const thumbPath = thumbRel.split("/").map(encodeURIComponent).join("/");
-                    thumbHref = `${basePath}${thumbPath}`;
-                    if (!thumbHref.startsWith("/")) thumbHref = `/${thumbHref}`;
-                } else {
-                    thumbHref = `${basePath}__thumb/${encodeRel(rel)}.jpg`;
-                    if (!thumbHref.startsWith("/")) thumbHref = `/${thumbHref}`;
-                }
-            }
-            let duration = "";
-            let width = "";
-            let height = "";
-            let fps = "";
-            if (videoExts.has(ext)) {
-                const cacheKey = `${abs}:${stat.mtimeMs}`;
-                const m = await ffprobeMeta(abs, cacheKey);
-                duration = m.duration || "";
-                width = m.width || "";
-                height = m.height || "";
-                fps = m.fps || "";
-            }
-            const size = fmtBytes(stat.size);
-            const mtime = fmtDate(stat.mtime);
-            rows.push({
-                href,
-                name,
-                cat,
-                ext,
-                thumb: thumbHref,
-                duration,
-                resolution: width && height ? `${width}×${height}` : "",
-                fps,
-                size,
-                mtime
-            });
-        });
-        await Promise.all(tasks);
-        rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-        const rowsHtml = rows.map((r) => {
-            const e = r.ext || "";
-            const thumbCell = r.thumb ? `<a href="${r.href}"><img class="thumb" src="${r.thumb}" alt=""></a>` : "";
-            const fpsCell = r.fps ? `${r.fps} fps` : "";
-            const tt = THUMB_TIME ? ` data-thumbts="${THUMB_TIME}"` : "";
-            return `<tr data-ext="${e}" data-cat="${r.cat}" data-name="${r.name}"${tt}><td class="thumb-cell">${thumbCell}</td><td><a class="file-link" href="${r.href}">${r.name}</a></td><td>${r.cat}</td><td>${r.duration}</td><td>${r.resolution}</td><td>${fpsCell}</td><td>${r.size}</td><td>${r.mtime}</td><td><a class="download-link" href="${r.href}" download>Download</a></td></tr>`;
-        }).join("");
-        const extList = Array.from(exts).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-        const filtersHtml = extList.map((x) => {
-            const id = `ext-${x.replace(/[^a-z0-9_-]/gi, "")}`;
-            const checked = (x === "mkv" || x === "jpg") ? "" : " checked";
-            return `<label><input type="checkbox" class="ext-filter" id="${id}" value="${x}"${checked}> .${x}</label>`;
-        }).join(" ");
+        const [items, iconFiles] = await Promise.all([buildItems(files), icons.existing()]);
+        const iconHrefs = {};
+        for (const [cat, { file, v }] of iconFiles) iconHrefs[cat] = `${basePath}__icon/${encodeURIComponent(file)}?v=${v}`;
+        const data = {
+            // Cleanup is an owner-only concern; shared links never list those recordings.
+            items: items.filter((it) => isOwner || !it.cleanup).map((it) => clientItem(it, basePath)),
+            cleanupCat: CLEANUP_DIR,
+            categories: loadCategories(),
+            icons: iconHrefs,
+            spriteFrames: SPRITE_FRAMES,
+            isOwner
+        };
         const shareUrl = `${PUBLIC_BASE_URL || requestOrigin(req)}${staticMount}`;
+        // Per-item "copy link" always hands out the shareable (keyed) URL, never the owner-only path.
+        data.shareBase = shareUrl;
+        data.basePath = basePath;
+        // JSON inside <script>: escape "<" so a file name can never close the tag.
+        const json = JSON.stringify(data).replace(/</g, "\\u003c");
         const bodyHtml = bodyTpl
-            .replace("%%FILTERS%%", filtersHtml || "")
-            .replace("%%ROWS%%", rowsHtml || "<tr><td colspan='9'>No files found.</td></tr>")
-            .replace(/%%SHARE_URL%%/g, htmlEsc(shareUrl))
-            .replace(/%%OWNER_CLASS%%/g, isOwner ? "is-owner" : "is-public");
+            .replace("%%DATA%%", lit(json))
+            .replace(/%%SHARE_URL%%/g, lit(htmlEsc(shareUrl)))
+            .replace(/%%OWNER_CLASS%%/g, lit(isOwner ? "is-owner" : "is-public"));
         const page = await renderWithTemplate(bodyHtml, "OBS Files", CSS_URL, "", basePath);
         res.type("html").send(page);
     } catch (err) {
-        console.error("table index error:", err);
+        console.error("index error:", err);
         res.status(500).send("Internal Server Error");
     }
 };
 
 app.use(staticMount, hiddenGuard);
+
+// Rename (display title only; files on disk are untouched). Empty title restores the automatic one.
+app.post("/__api/title", ownerGuard, express.json({ limit: "4kb" }), async (req, res) => {
+    const stem = String((req.body && req.body.stem) || "");
+    const title = String((req.body && req.body.title) || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    if (!safeRelPath(stem)) return res.status(400).json({ error: "bad path" });
+    const files = await walkFiles(root);
+    if (!files.some((rel) => stemOf(rel) === stem)) return res.status(404).json({ error: "not found" });
+    if (title) meta.titles[stem] = title;
+    else delete meta.titles[stem];
+    try {
+        await saveMeta();
+    } catch (err) {
+        console.error("saving titles failed:", err);
+        return res.status(500).json({ error: "save failed" });
+    }
+    res.json({ stem, title });
+});
+
+// Mark recordings for cleanup (move every file of the recording under CLEANUP_DIR/) or restore them.
+// Nothing is deleted here; deletion/backup policy is left to whatever reads the cleanup folder.
+const moveGroup = async (files, stem, toCleanup) => {
+    if (toCleanup === inCleanup(stem)) return { stem, skipped: true };
+    if (media.status(stem)) throw Object.assign(new Error("still converting"), { code: 409 });
+    const group = files.filter((rel) => stemOf(rel) === stem);
+    if (!group.length) throw Object.assign(new Error("not found"), { code: 404 });
+    const dest = (rel) => (toCleanup ? `${CLEANUP_DIR}/${rel}` : originalRel(rel));
+    for (const rel of group) {
+        const target = safeRelPath(dest(rel));
+        if (!target) throw Object.assign(new Error("bad path"), { code: 400 });
+        if (await hasFile(target)) throw Object.assign(new Error(`${dest(rel)} already exists`), { code: 409 });
+    }
+    const moved = [];
+    try {
+        for (const rel of group) {
+            const from = path.join(root, rel);
+            const to = path.join(root, dest(rel));
+            await fsp.mkdir(path.dirname(to), { recursive: true });
+            await fsp.rename(from, to);
+            moved.push([from, to]);
+        }
+    } catch (err) {
+        for (const [from, to] of moved.reverse()) await fsp.rename(to, from).catch(() => {});
+        throw err;
+    }
+    const newStem = dest(stem);
+    if (meta.titles[stem]) {
+        meta.titles[newStem] = meta.titles[stem];
+        delete meta.titles[stem];
+    }
+    if (toCleanup) meta.cleanup[newStem] = { at: Date.now(), from: stem };
+    else delete meta.cleanup[stem];
+    // Drop now-empty folders left behind under the cleanup dir after a restore.
+    if (!toCleanup) {
+        let dir = path.dirname(path.join(root, stem));
+        const top = path.join(root, CLEANUP_DIR);
+        while (dir.startsWith(top + path.sep)) {
+            if (!(await fsp.rmdir(dir).then(() => true, () => false))) break;
+            dir = path.dirname(dir);
+        }
+    }
+    console.log(`[cleanup] ${toCleanup ? "marked" : "restored"}: ${stem} -> ${newStem} (${group.length} file${group.length === 1 ? "" : "s"})`);
+    return { stem: newStem };
+};
+
+app.post("/__api/cleanup", ownerGuard, express.json({ limit: "64kb" }), async (req, res) => {
+    const body = req.body || {};
+    const action = body.action;
+    const stems = Array.isArray(body.stems) ? body.stems.map(String).slice(0, 500) : [];
+    if (!["mark", "restore"].includes(action) || !stems.length) return res.status(400).json({ error: "bad request" });
+    const files = await walkFiles(root);
+    const results = [];
+    for (const stem of stems) {
+        if (!safeRelPath(stem)) {
+            results.push({ stem, error: "bad path" });
+            continue;
+        }
+        try {
+            results.push({ from: stem, ...(await moveGroup(files, stem, action === "mark")) });
+        } catch (err) {
+            results.push({ stem, error: err.message });
+        }
+    }
+    try {
+        await saveMeta();
+    } catch (err) {
+        console.error("saving meta failed:", err);
+    }
+    const failed = results.filter((r) => r.error);
+    res.status(failed.length === results.length ? 409 : 200).json({ results });
+});
 
 app.get("/", ownerGuard, async (req, res) => {
     await renderIndex(req, res, "/", true);
@@ -479,40 +538,57 @@ app.get(new RegExp(`^${esc(mount)}/?$`), async (req, res) => {
     await renderIndex(req, res, staticMount, false);
 });
 
-const sendGeneratedThumb = async (req, res, encoded) => {
+const ART_KINDS = { poster: "video", sprite: "video", wave: "audio" };
+
+const sendArt = async (res, artKind, encoded) => {
     const rel = decodeRel(encoded);
     const abs = safeRelPath(rel);
-    const ext = extOf(rel);
-    if (!abs || !videoExts.has(ext) || !(await hasFile(abs))) {
+    const kind = kindOf(extOf(rel));
+    if (!abs || ART_KINDS[artKind] !== kind || !(await hasFile(abs))) {
         res.status(404).end();
         return;
     }
-    const thumb = await ensureGeneratedThumb(abs, rel);
-    if (!thumb) {
+    const st = await fsp.stat(abs);
+    const meta = await media.probe(abs, st.mtimeMs);
+    const stem = stemOf(rel);
+    let out = "";
+    if (artKind === "poster") out = await media.ensurePoster(abs, stem, meta.duration, true);
+    else if (artKind === "sprite") out = await media.ensureSprite(abs, stem, meta.duration, true);
+    else if (artKind === "wave") out = await media.ensureWave(abs, stem, meta.coverArt, true);
+    if (!out) {
         res.status(404).end();
         return;
     }
-    res.sendFile(thumb, {
-        dotfiles: "allow",
-        headers: {
-            "Content-Type": "image/jpeg",
-            "Cache-Control": "public, max-age=86400"
-        }
-    });
+    res.sendFile(out, { dotfiles: "allow", headers: { "Cache-Control": "public, max-age=604800" } });
+};
+
+const ART_RE = /__art\/(poster|sprite|wave)\/([A-Za-z0-9_-]+)\.(?:jpg|png)$/;
+const ICON_RE = /__icon\/([^/]+)$/;
+
+const sendIcon = async (res, encodedName) => {
+    let name;
+    try {
+        name = decodeURIComponent(encodedName);
+    } catch {
+        return res.status(404).end();
+    }
+    const abs = icons.resolve(name);
+    if (!abs || !(await hasFile(abs))) return res.status(404).end();
+    res.sendFile(abs, { dotfiles: "allow", headers: { "Cache-Control": "public, max-age=604800" } });
 };
 
 app.use(async (req, res, next) => {
     const originalPath = urlPath(req.originalUrl || req.url || "");
-    if (originalPath.startsWith(`${staticMount}__thumb/`)) {
-        const file = path.basename(originalPath);
-        await sendGeneratedThumb(req, res, file.replace(/\.jpg$/i, ""));
+    const ic = ICON_RE.exec(originalPath);
+    if (ic && originalPath.startsWith(`${staticMount}__icon/`)) return sendIcon(res, ic[1]);
+    if (ic && originalPath.startsWith("/__icon/")) return ownerGuard(req, res, () => sendIcon(res, ic[1]));
+    const m = ART_RE.exec(originalPath);
+    if (m && originalPath.startsWith(`${staticMount}__art/`)) {
+        await sendArt(res, m[1], m[2]);
         return;
     }
-    if (originalPath.startsWith("/__thumb/")) {
-        ownerGuard(req, res, async () => {
-            const file = path.basename(originalPath);
-            await sendGeneratedThumb(req, res, file.replace(/\.jpg$/i, ""));
-        });
+    if (m && originalPath.startsWith("/__art/")) {
+        ownerGuard(req, res, () => sendArt(res, m[1], m[2]));
         return;
     }
     next();
@@ -539,43 +615,26 @@ const MIME_MAP = {
     ".html": "text/html"
 };
 
-app.use(
-    staticMount,
-    express.static(root, {
-        fallthrough: true,
-        etag: true,
-        immutable: true,
-        maxAge: "1h",
-        index: false,
-        setHeaders: (res, filePath) => {
-            const ext = path.extname(filePath).toLowerCase();
-            const t = MIME_MAP[ext];
-            if (t) res.setHeader("Content-Type", t);
-            res.setHeader("Accept-Ranges", "bytes");
-            res.setHeader("Content-Disposition", "inline");
-        }
-    })
-);
+const staticOpts = {
+    fallthrough: true,
+    etag: true,
+    immutable: true,
+    maxAge: "1h",
+    index: false,
+    setHeaders: (res, filePath) => {
+        const ext = path.extname(filePath).toLowerCase();
+        const t = MIME_MAP[ext];
+        if (t) res.setHeader("Content-Type", t);
+        res.setHeader("Accept-Ranges", "bytes");
+        res.setHeader("Content-Disposition", "inline");
+    }
+};
+
+app.use(staticMount, express.static(root, staticOpts));
 
 app.use("/", ownerGuard, hiddenGuard);
 
-app.use(
-    "/",
-    express.static(root, {
-        fallthrough: true,
-        etag: true,
-        immutable: true,
-        maxAge: "1h",
-        index: false,
-        setHeaders: (res, filePath) => {
-            const ext = path.extname(filePath).toLowerCase();
-            const t = MIME_MAP[ext];
-            if (t) res.setHeader("Content-Type", t);
-            res.setHeader("Accept-Ranges", "bytes");
-            res.setHeader("Content-Disposition", "inline");
-        }
-    })
-);
+app.use("/", express.static(root, staticOpts));
 
 app.all(/.*/, (_req, res) => res.status(404).end());
 
@@ -584,6 +643,8 @@ const url = `http://${DISPLAY_HOST}:${PORT}${staticMount}`;
 
 const server = app.listen(PORT, HOST || undefined, () => {
     console.log(`obs_server listening on ${url}`);
+    media.start(() => walkFiles(root), buildItems);
+    icons.sync(loadCategories()).catch((e) => console.warn("icon sync failed:", e.message));
 });
 
 server.on("error", (err) => {

@@ -1,0 +1,15 @@
+{
+    "school": { "title": "School" },
+    "movies": { "title": "Movies" },
+    "shows": { "title": "Shows" },
+    "audioma": { "title": "Audioma" },
+    "ben1024": { "title": "ben1024" },
+    "peak": { "title": "PEAK", "steam": 3527290 },
+    "supermarket_together": { "title": "Supermarket Together", "steam": 2709570 },
+    "dead_by_daylight": { "title": "Dead by Daylight", "steam": 381210 },
+    "fortnite": { "title": "Fortnite", "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7c/Fortnite_F_lettermark_logo.png" },
+    "spore": { "title": "Spore", "steam": 17390 },
+    "sssv": { "title": "SSSV" },
+    "wrought_flesh": { "title": "Wrought Flesh", "steam": 1762010 },
+    "Uncategorized": { "title": "Unsorted" }
+}
