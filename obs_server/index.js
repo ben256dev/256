@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const { execFileSync } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
@@ -72,9 +73,10 @@ const icons = createIcons({ iconDir: ICON_DIR, log: (msg) => console.log(`[icons
 
 // Owner-set display names, keyed by the recording's path without extension so a name survives
 // MKV→MP4 remuxing. Stored beside the media (hidden file, never served statically).
-let meta = { titles: {}, cleanup: {} };
+const META_DEFAULTS = () => ({ titles: {}, cleanup: {}, viewers: {}, invites: [] });
+let meta = META_DEFAULTS();
 try {
-    meta = { titles: {}, cleanup: {}, ...JSON.parse(fs.readFileSync(META_FILE, "utf8")) };
+    meta = { ...META_DEFAULTS(), ...JSON.parse(fs.readFileSync(META_FILE, "utf8")) };
 } catch (err) {
     if (err.code !== "ENOENT") console.warn("could not read", META_FILE, err.message);
 }
@@ -323,36 +325,99 @@ const urlPath = (raw) => {
     }
 };
 
-const isOwnerRequest = async (req) => {
-    if (!OWNER_EMAILS.length) return false;
+// ---- Access: owner (OWNER_EMAILS), viewers (Google accounts that redeemed an invite), everyone else.
+
+const normEmail = (e) => String(e || "").trim().toLowerCase();
+const SESSION_TTL_MS = 60 * 1000;
+const sessionCache = new Map(); // cookie header -> { at, user }
+
+// Ask the ben256 SSO who this is. Cached briefly: a page load fires dozens of art/icon requests.
+const sessionUser = async (req) => {
     const cookie = req.headers.cookie;
-    if (!cookie) return false;
+    if (!cookie) return null;
+    const hit = sessionCache.get(cookie);
+    if (hit && Date.now() - hit.at < SESSION_TTL_MS) return hit.user;
+    let user = null;
     try {
         const session = await fetchJSON(SSO_SESSION_URL, { Cookie: cookie });
-        const email = session && session.user && session.user.email;
-        return Boolean(session.authenticated && email && OWNER_EMAILS.includes(String(email).trim().toLowerCase()));
+        const email = session && session.authenticated && session.user && normEmail(session.user.email);
+        if (email) user = { email, name: String(session.user.name || "") };
     } catch (err) {
         console.warn("sso session check failed:", err.message);
-        return false;
+        return null; // don't cache failures
     }
+    if (sessionCache.size > 500) sessionCache.clear();
+    sessionCache.set(cookie, { at: Date.now(), user });
+    return user;
 };
 
-const loginURL = (req) => `${SSO_LOGIN_URL}?next=${encodeURIComponent(requestOrigin(req) + req.originalUrl)}`;
+const roleOf = (user) => {
+    if (!user) return "";
+    if (OWNER_EMAILS.includes(user.email)) return "owner";
+    if (meta.viewers[user.email]) return "viewer";
+    return "";
+};
+
+const access = async (req) => {
+    const user = await sessionUser(req);
+    return { user, role: roleOf(user) };
+};
+
+const ssoOrigin = (() => {
+    try {
+        return new URL(SSO_LOGIN_URL).origin;
+    } catch {
+        return "";
+    }
+})();
+const loginURL = (req, path = req.originalUrl) => `${SSO_LOGIN_URL}?next=${encodeURIComponent(requestOrigin(req) + path)}`;
+const logoutURL = (req, path = req.originalUrl) =>
+    `${ssoOrigin}/auth/logout?next=${encodeURIComponent(`${SSO_LOGIN_URL}?next=${encodeURIComponent(requestOrigin(req) + path)}`)}`;
+
+const simplePage = (title, body) => `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${htmlEsc(title)}</title>
+<style>
+:root { color-scheme: dark }
+* { box-sizing: border-box }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; background: #0f0f0f; color: #f1f1f1; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif }
+.box { width: min(440px, 100%); padding: 28px; border-radius: 14px; background: #1b1b1b; border: 1px solid rgba(255,255,255,.12) }
+h1 { margin: 0 0 6px; font-size: 1.4rem }
+p { color: #bdbdbd; margin: 8px 0 }
+strong { color: #fff }
+.btn { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 44px; margin-top: 14px; border: 0; border-radius: 8px; background: #fff; color: #000; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer }
+.btn.alt { background: transparent; color: #f1f1f1; border: 1px solid rgba(255,255,255,.2) }
+form { margin: 0 }
+</style></head>
+<body><main class="box">${body}</main></body></html>`;
+
+const deny = (req, res, user, wantOwner) => {
+    if (req.method !== "GET" || req.path.startsWith("/__")) return res.status(user ? 403 : 401).end();
+    const body = user
+        ? `<h1>No access</h1>
+<p>You're signed in as <strong>${htmlEsc(user.email)}</strong>, which ${wantOwner ? "isn't the owner account" : "hasn't been invited"}.</p>
+<p>${wantOwner ? "" : "Ask Ben for an invite link, then open it while signed in with the Google account you want to use."}</p>
+<a class="btn alt" href="${htmlEsc(logoutURL(req))}">Use a different Google account</a>`
+        : `<h1>OBS Files</h1>
+<p>Sign in with the Google account you were invited with.</p>
+<a class="btn" href="${htmlEsc(loginURL(req))}">Sign in with Google</a>`;
+    res.status(user ? 403 : 401).type("html").send(simplePage("OBS Files", body));
+};
 
 const ownerGuard = async (req, res, next) => {
-    if (await isOwnerRequest(req)) return next();
-    res.status(401).type("html").send(`<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in</title></head>
-<body>
-<main>
-<h1>OBS Files</h1>
-<p>Sign in as the site owner to use the private OBS browser.</p>
-<p><a href="${htmlEsc(loginURL(req))}">Sign in with Google</a></p>
-<p>Shared links still use the private URL key.</p>
-</main>
-</body>
-</html>`);
+    const a = await access(req);
+    if (a.role === "owner") return next();
+    deny(req, res, a.user, true);
+};
+
+// Owner or an invited viewer.
+const viewerGuard = async (req, res, next) => {
+    const a = await access(req);
+    if (a.role) {
+        req.access = a;
+        return next();
+    }
+    deny(req, res, a.user, false);
 };
 
 const fallbackTemplate = `<!doctype html>
@@ -404,7 +469,8 @@ const renderWithTemplate = async (bodyHtml, title, cssUrl, footerHtml, baseHref)
     return out;
 };
 
-const renderIndex = async (req, res, basePath, isOwner) => {
+const renderIndex = async (req, res, basePath, role) => {
+    const isOwner = role === "owner";
     try {
         const [files, bodyTpl] = await Promise.all([walkFiles(root), fsp.readFile(BODY_FILE, "utf8")]);
         const [items, iconFiles] = await Promise.all([buildItems(files), icons.existing()]);
@@ -417,18 +483,20 @@ const renderIndex = async (req, res, basePath, isOwner) => {
             categories: loadCategories(),
             icons: iconHrefs,
             spriteFrames: SPRITE_FRAMES,
-            isOwner
+            isOwner,
+            viewer: role === "viewer" && req.access ? req.access.user.email : ""
         };
         const shareUrl = `${PUBLIC_BASE_URL || requestOrigin(req)}${staticMount}`;
         // Per-item "copy link" always hands out the shareable (keyed) URL, never the owner-only path.
-        data.shareBase = shareUrl;
+        // Viewers get links to the sign-in-protected site, so they can't pass the private key on.
+        data.shareBase = role === "viewer" ? `${PUBLIC_BASE_URL || requestOrigin(req)}/` : shareUrl;
         data.basePath = basePath;
         // JSON inside <script>: escape "<" so a file name can never close the tag.
         const json = JSON.stringify(data).replace(/</g, "\\u003c");
         const bodyHtml = bodyTpl
             .replace("%%DATA%%", lit(json))
-            .replace(/%%SHARE_URL%%/g, lit(htmlEsc(shareUrl)))
-            .replace(/%%OWNER_CLASS%%/g, lit(isOwner ? "is-owner" : "is-public"));
+            .replace(/%%SHARE_URL%%/g, lit(htmlEsc(role === "viewer" ? "" : shareUrl)))
+            .replace(/%%OWNER_CLASS%%/g, lit(isOwner ? "is-owner" : role === "viewer" ? "is-viewer" : "is-public"));
         const page = await renderWithTemplate(bodyHtml, "OBS Files", CSS_URL, "", basePath);
         res.type("html").send(page);
     } catch (err) {
@@ -530,12 +598,116 @@ app.post("/__api/cleanup", ownerGuard, express.json({ limit: "64kb" }), async (r
     res.status(failed.length === results.length ? 409 : 200).json({ results });
 });
 
-app.get("/", ownerGuard, async (req, res) => {
-    await renderIndex(req, res, "/", true);
+// ---- Invites: owner makes a one-time link; whoever opens it signs in with Google and accepts,
+// which registers that Google email as a viewer. Only a hash of each token is stored.
+const INVITE_DAYS = Number(process.env.INVITE_DAYS || 7);
+const tokenHash = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
+const findInvite = (token) => {
+    if (!/^[A-Za-z0-9_-]{20,100}$/.test(token || "")) return null;
+    const h = tokenHash(token);
+    return meta.invites.find((i) => i.hash === h) || null;
+};
+const inviteState = (inv) =>
+    !inv ? "invalid" : inv.revokedAt ? "revoked" : inv.usedAt ? "used" : Date.now() > inv.expiresAt ? "expired" : "ok";
+const publicInvite = (inv) => ({
+    id: inv.id, note: inv.note || "", createdAt: inv.createdAt, expiresAt: inv.expiresAt,
+    usedBy: inv.usedBy || "", usedAt: inv.usedAt || 0, state: inviteState(inv)
+});
+const inviteDeadPage = (state) =>
+    simplePage("Invite", `<h1>Invite ${state === "used" ? "already used" : state === "expired" ? "expired" : "not valid"}</h1>
+<p>${state === "used" ? "This one-time link has already been redeemed." : state === "expired" ? "This link is past its expiry date." : "This link doesn't work (it may have been revoked or mistyped)."}</p>
+<p>Ask Ben for a new invite link.</p>`);
+
+app.get("/invite/:token", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    const inv = findInvite(req.params.token);
+    const state = inviteState(inv);
+    if (state !== "ok") return res.status(410).type("html").send(inviteDeadPage(state));
+    const { user, role } = await access(req);
+    if (role) return res.redirect("/");
+    const page = user
+        ? `<h1>You're invited</h1>
+<p>Accept to get access to Ben's OBS recordings with <strong>${htmlEsc(user.email)}</strong>.</p>
+<form method="post"><button class="btn" type="submit">Accept as ${htmlEsc(user.email)}</button></form>
+<a class="btn alt" href="${htmlEsc(logoutURL(req))}">Use a different Google account</a>`
+        : `<h1>You're invited</h1>
+<p>Sign in with Google to accept. The account you sign in with is the one that gets access.</p>
+<a class="btn" href="${htmlEsc(loginURL(req))}">Sign in with Google</a>`;
+    res.type("html").send(simplePage("Invite", page));
+});
+
+app.post("/invite/:token", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    const inv = findInvite(req.params.token);
+    const state = inviteState(inv);
+    if (state !== "ok") return res.status(410).type("html").send(inviteDeadPage(state));
+    const { user, role } = await access(req);
+    if (!user) return res.redirect(303, req.originalUrl);
+    if (role) return res.redirect(303, "/");
+    inv.usedAt = Date.now();
+    inv.usedBy = user.email;
+    meta.viewers[user.email] = { addedAt: inv.usedAt, name: user.name, invite: inv.id, note: inv.note || "" };
+    try {
+        await saveMeta();
+    } catch (err) {
+        console.error("saving invite failed:", err);
+        delete meta.viewers[user.email];
+        inv.usedAt = 0;
+        inv.usedBy = "";
+        return res.status(500).type("html").send(simplePage("Invite", "<h1>Something went wrong</h1><p>Please try the link again.</p>"));
+    }
+    console.log(`[access] ${user.email} redeemed invite ${inv.id}${inv.note ? ` (${inv.note})` : ""}`);
+    res.redirect(303, "/");
+});
+
+app.get("/__api/access", ownerGuard, (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+        viewers: Object.entries(meta.viewers).map(([email, v]) => ({ email, ...v })).sort((a, b) => b.addedAt - a.addedAt),
+        invites: meta.invites.map(publicInvite).filter((i) => i.state === "ok").sort((a, b) => b.createdAt - a.createdAt)
+    });
+});
+
+app.post("/__api/invites", ownerGuard, express.json({ limit: "4kb" }), async (req, res) => {
+    const body = req.body || {};
+    const note = String(body.note || "").replace(/\s+/g, " ").trim().slice(0, 100);
+    const days = Math.min(Math.max(Number(body.days) || INVITE_DAYS, 1), 90);
+    const token = crypto.randomBytes(24).toString("base64url");
+    const inv = { id: crypto.randomBytes(6).toString("hex"), hash: tokenHash(token), note, createdAt: Date.now(), expiresAt: Date.now() + days * 864e5 };
+    meta.invites.push(inv);
+    // Keep the list from growing forever: drop dead invites older than 30 days.
+    meta.invites = meta.invites.filter((i) => inviteState(i) === "ok" || Date.now() - i.createdAt < 30 * 864e5);
+    await saveMeta();
+    res.json({ url: `${PUBLIC_BASE_URL || requestOrigin(req)}/invite/${token}`, invite: publicInvite(inv) });
+});
+
+app.post("/__api/invites/revoke", ownerGuard, express.json({ limit: "1kb" }), async (req, res) => {
+    const inv = meta.invites.find((i) => i.id === String((req.body || {}).id || ""));
+    if (!inv) return res.status(404).json({ error: "not found" });
+    inv.revokedAt = Date.now();
+    await saveMeta();
+    res.json({ ok: true });
+});
+
+app.post("/__api/viewers/remove", ownerGuard, express.json({ limit: "1kb" }), async (req, res) => {
+    const email = normEmail((req.body || {}).email);
+    if (!meta.viewers[email]) return res.status(404).json({ error: "not found" });
+    delete meta.viewers[email];
+    await saveMeta();
+    // Drop cached sessions so removal takes effect immediately.
+    sessionCache.clear();
+    console.log(`[access] removed viewer ${email}`);
+    res.json({ ok: true });
+});
+
+app.get("/", viewerGuard, async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    await renderIndex(req, res, "/", req.access.role);
 });
 
 app.get(new RegExp(`^${esc(mount)}/?$`), async (req, res) => {
-    await renderIndex(req, res, staticMount, false);
+    await renderIndex(req, res, staticMount, "public");
 });
 
 const ART_KINDS = { poster: "video", sprite: "video", wave: "audio" };
@@ -581,14 +753,14 @@ app.use(async (req, res, next) => {
     const originalPath = urlPath(req.originalUrl || req.url || "");
     const ic = ICON_RE.exec(originalPath);
     if (ic && originalPath.startsWith(`${staticMount}__icon/`)) return sendIcon(res, ic[1]);
-    if (ic && originalPath.startsWith("/__icon/")) return ownerGuard(req, res, () => sendIcon(res, ic[1]));
+    if (ic && originalPath.startsWith("/__icon/")) return viewerGuard(req, res, () => sendIcon(res, ic[1]));
     const m = ART_RE.exec(originalPath);
     if (m && originalPath.startsWith(`${staticMount}__art/`)) {
         await sendArt(res, m[1], m[2]);
         return;
     }
     if (m && originalPath.startsWith("/__art/")) {
-        ownerGuard(req, res, () => sendArt(res, m[1], m[2]));
+        viewerGuard(req, res, () => sendArt(res, m[1], m[2]));
         return;
     }
     next();
@@ -632,7 +804,7 @@ const staticOpts = {
 
 app.use(staticMount, express.static(root, staticOpts));
 
-app.use("/", ownerGuard, hiddenGuard);
+app.use("/", viewerGuard, hiddenGuard);
 
 app.use("/", express.static(root, staticOpts));
 

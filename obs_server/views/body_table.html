@@ -15,6 +15,7 @@
             <button type="button" data-view="grid">Library</button>
             <button type="button" data-view="table">Table</button>
         </div>
+        <button id="people-btn" class="icon-btn" type="button" hidden aria-label="People &amp; invites" title="People &amp; invites"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
         <button id="share-link" class="btn ghost" type="button" data-share-url="%%SHARE_URL%%">Share</button>
     </div>
 </header>
@@ -84,6 +85,25 @@
             <button type="submit" class="btn primary">Save</button>
         </div>
     </form>
+</dialog>
+<dialog id="people-dialog" aria-labelledby="people-title">
+    <div class="dlg-head"><h2 id="people-title">People</h2><button type="button" class="icon-btn" data-people="close" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+    <section>
+        <h3>Invite someone</h3>
+        <form id="invite-form" class="invite-row">
+            <input id="invite-note" maxlength="100" placeholder="Who's it for? (optional)" autocomplete="off">
+            <select id="invite-days" aria-label="Expires">
+                <option value="1">1 day</option><option value="7" selected>7 days</option><option value="30">30 days</option>
+            </select>
+            <button class="btn primary" type="submit">Create link</button>
+        </form>
+        <div id="invite-result" hidden>
+            <div class="invite-row"><input id="invite-url" readonly aria-label="Invite link"><button type="button" class="icon-btn" data-people="copy" aria-label="Copy link" title="Copy link"></button></div>
+            <p class="hint">Works once: whoever opens it and signs in with Google gets access, so send it to them directly.</p>
+        </div>
+    </section>
+    <section><h3>Have access</h3><ul class="people-list" id="viewer-list"></ul></section>
+    <section><h3>Pending invites</h3><ul class="people-list" id="invite-list"></ul></section>
 </dialog>
 </div>
 
@@ -270,6 +290,27 @@
 .dlg-actions { display: flex; gap: 8px; align-items: center }
 .dlg-actions span { flex: 1 }
 #obs .dlg-actions .btn.primary, #rename-dialog .btn.primary { background: #fff; color: #000 }
+.is-viewer #share-link { display: none }
+#people-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #1f1f1f; color: var(--text) }
+#people-dialog::backdrop { background: rgba(0,0,0,.6) }
+.dlg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px }
+.dlg-head h2 { margin: 0; font-size: 1.25rem }
+#people-dialog h3 { margin: 18px 0 8px; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+.invite-row { display: flex; gap: 8px; align-items: center }
+.invite-row input, .invite-row select { min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(0,0,0,.35); color: inherit; font: inherit }
+.invite-row input { flex: 1; min-width: 0 }
+#invite-url { font-family: ui-monospace, Menlo, monospace; font-size: .85rem }
+#invite-result { margin-top: 10px }
+#people-dialog .hint { color: var(--muted); font-size: .82rem; margin: 8px 0 0 }
+#people-dialog .btn.primary { background: #fff; color: #000 }
+.people-list { list-style: none; margin: 0; padding: 0 }
+.people-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line) }
+.people-list li:first-child { border-top: 0 }
+.people-list .who { flex: 1; min-width: 0 }
+.people-list .who b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.people-list .who span { color: var(--muted); font-size: .82rem }
+.people-list .empty-li { color: var(--muted); font-size: .9rem }
+@media (max-width: 560px) { #invite-form { flex-wrap: wrap } #invite-note { flex-basis: 100% } }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0) }
 #file-table .more-col { width: 44px }
 .status-tag { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--accent); color: #fff; font-size: .72rem; font-weight: 700 }
@@ -667,7 +708,7 @@ const player = {
         this.el.addEventListener("click", (e) => { if (e.target === this.el) this.close(); });
 
         document.addEventListener("keydown", (e) => {
-            if (e.key !== "Escape" || $("#rename-dialog").open) return;
+            if (e.key !== "Escape" || document.querySelector("dialog[open]")) return;
             if (!$("#menu").hidden) return closeMenu();
             this.close();
         });
@@ -781,6 +822,70 @@ const renameDialog = (it) => {
     input.focus(); input.select();
 };
 
+// ---- People & invites (owner only) -------------------------------------------------------------
+const ago = (t) => { const d = Math.round((Date.now() - t) / 864e5); return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`; };
+const until = (t) => { const h = Math.round((t - Date.now()) / 36e5); return h < 24 ? `expires in ${Math.max(h, 1)}h` : `expires in ${Math.round(h / 24)} days`; };
+const api = async (url, body) => {
+    const r = await fetch(url, body === undefined ? { credentials: "same-origin" } : {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+};
+const loadPeople = async () => {
+    let data;
+    try { data = await api("/__api/access"); } catch (e) { alert(`Couldn't load people: ${e.message}`); return; }
+    $("#viewer-list").innerHTML = data.viewers.length ? data.viewers.map((v) => `<li><div class="who"><b>${esc(v.email)}</b>
+        <span>${esc([v.note, `added ${ago(v.addedAt)}`].filter(Boolean).join(" · "))}</span></div>
+        ${iconBtn("trash", `Remove access for ${v.email}`, `data-people="remove" data-email="${esc(v.email)}"`, "danger")}</li>`).join("")
+        : `<li class="empty-li">Nobody yet. Only you.</li>`;
+    $("#invite-list").innerHTML = data.invites.length ? data.invites.map((i) => `<li><div class="who"><b>${esc(i.note || "Invite link")}</b>
+        <span>created ${ago(i.createdAt)} · ${until(i.expiresAt)}</span></div>
+        ${iconBtn("x", "Revoke invite", `data-people="revoke" data-id="${esc(i.id)}"`, "danger")}</li>`).join("")
+        : `<li class="empty-li">No unused invite links.</li>`;
+};
+const peopleInit = () => {
+    if (!IS_OWNER) return;
+    const dlg = $("#people-dialog");
+    $("#people-btn").hidden = false;
+    $("#people-btn").addEventListener("click", () => {
+        $("#invite-result").hidden = true;
+        $("#invite-note").value = "";
+        dlg.showModal();
+        loadPeople();
+    });
+    dlg.querySelector('[data-people="copy"]').innerHTML = svg("link");
+    $("#invite-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try {
+            const j = await api("/__api/invites", { note: $("#invite-note").value, days: Number($("#invite-days").value) });
+            $("#invite-url").value = j.url;
+            $("#invite-result").hidden = false;
+            $("#invite-url").select();
+            loadPeople();
+        } catch (err) { alert(`Couldn't create invite: ${err.message}`); }
+    });
+    dlg.addEventListener("click", async (e) => {
+        if (e.target === dlg) return dlg.close();
+        const b = e.target.closest("[data-people]");
+        if (!b) return;
+        const act = b.dataset.people;
+        if (act === "close") return dlg.close();
+        if (act === "copy") {
+            const url = $("#invite-url").value;
+            try { await navigator.clipboard.writeText(url); b.innerHTML = svg("check"); b.classList.add("ok"); setTimeout(() => { b.innerHTML = svg("link"); b.classList.remove("ok"); }, 1500); }
+            catch { $("#invite-url").select(); }
+            return;
+        }
+        try {
+            if (act === "remove" && confirm(`Remove access for ${b.dataset.email}?`)) await api("/__api/viewers/remove", { email: b.dataset.email });
+            else if (act === "revoke") await api("/__api/invites/revoke", { id: b.dataset.id });
+            else return;
+            loadPeople();
+        } catch (err) { alert(`Failed: ${err.message}`); }
+    });
+};
+
 // ---- Wiring -----------------------------------------------------------------------------------
 const setView = (v) => {
     state.view = v; store.set("obs-view", v);
@@ -871,6 +976,7 @@ share.addEventListener("click", async () => {
 if (!["browse", "grid", "table"].includes(state.view)) state.view = "browse";
 player.init();
 hoverInit();
+peopleInit();
 const fromHash = /^#c\/(.+)$/.exec(location.hash);
 if (fromHash) { state.cat = decodeURIComponent(fromHash[1]); state.view = "grid"; }
 render();
