@@ -177,9 +177,10 @@
 .see-all:hover { color: var(--text) }
 .row-view { position: relative }
 .track { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(220px, 22%, 330px); gap: 10px; overflow-x: auto; overscroll-behavior-x: contain;
-    scroll-snap-type: x mandatory; scrollbar-width: none; padding: 22px 4px 26px; margin: -14px -4px -18px }
+    scrollbar-width: none; padding: 22px 4px 26px; margin: -14px -4px -18px }
 .track::-webkit-scrollbar { display: none }
-.track > .card { scroll-snap-align: start }
+.track.dragging { cursor: grabbing; user-select: none }
+.track.dragging .card { pointer-events: none }
 .nav { position: absolute; top: 8px; bottom: 26px; width: 44px; border: 0; z-index: 5; cursor: pointer; color: #fff; font-size: 28px; display: grid; place-items: center; opacity: 0; transition: opacity .2s }
 .nav.prev { left: -4px; background: linear-gradient(90deg, rgba(15,15,15,.95), transparent); border-radius: 8px 0 0 8px }
 .nav.next { right: -4px; background: linear-gradient(270deg, rgba(15,15,15,.95), transparent); border-radius: 0 8px 8px 0 }
@@ -531,6 +532,51 @@ const hoverInit = () => {
         if (f !== preview.frame) showFrame(preview, f);
     });
     document.addEventListener("pointerleave", stopPreview);
+};
+
+// Arrow buttons page by ~a screenful and land with a card flush against the left edge.
+// (Only the arrows align to cards; dragging, wheel and touch scrolling stop wherever they stop.)
+const pageTrack = (track, dir) => {
+    const cur = track.scrollLeft, max = track.scrollWidth - track.clientWidth, pad = parseFloat(getComputedStyle(track).paddingLeft) || 0;
+    const tr = track.getBoundingClientRect();
+    const starts = [...track.children].map((c) => c.getBoundingClientRect().left - tr.left + cur - pad);
+    const goal = cur + dir * track.clientWidth * 0.9;
+    // Furthest card start within one page of travel (so the card nearest the far edge comes into view).
+    const inReach = starts.filter((x) => (dir > 0 ? x > cur + 1 && x <= goal : x < cur - 1 && x >= goal));
+    const to = inReach.length ? (dir > 0 ? Math.max(...inReach) : Math.min(...inReach)) : goal;
+    track.scrollTo({ left: Math.max(0, Math.min(to, max)), behavior: "smooth" });
+};
+
+// ---- Middle-click drag scrolls a carousel sideways (instead of the browser's autoscroll) ---------
+const dragInit = () => {
+    let drag = null;
+    document.addEventListener("pointerdown", (e) => {
+        const track = e.button === 1 && e.target.closest(".track");
+        if (!track) return;
+        e.preventDefault(); // suppress autoscroll / paste
+        stopPreview();
+        drag = { track, x: e.clientX, left: track.scrollLeft, id: e.pointerId };
+        track.setPointerCapture(e.pointerId);
+        track.classList.add("dragging");
+    });
+    document.addEventListener("pointermove", (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const dx = e.clientX - drag.x;
+        drag.track.scrollLeft = drag.left - dx;
+    });
+    const end = (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const { track } = drag;
+        track.classList.remove("dragging");
+        if (track.hasPointerCapture(e.pointerId)) track.releasePointerCapture(e.pointerId);
+        updateNav(track.parentElement);
+        drag = null;
+    };
+    document.addEventListener("pointerup", end);
+    document.addEventListener("pointercancel", end);
+    // Middle-clicking a card should only start a drag, never open anything.
+    document.addEventListener("auxclick", (e) => { if (e.button === 1 && e.target.closest && e.target.closest(".track")) e.preventDefault(); });
+    document.addEventListener("mousedown", (e) => { if (e.button === 1 && e.target.closest(".track")) e.preventDefault(); });
 };
 
 // ---- Views ------------------------------------------------------------------------------------
@@ -1023,7 +1069,7 @@ document.addEventListener("click", (e) => {
     const kc = t.closest("#kind-chips [data-kind]");
     if (kc) { const k = kc.dataset.kind; state.kinds.has(k) ? state.kinds.delete(k) : state.kinds.add(k); return render(); }
     const nav = t.closest(".nav");
-    if (nav) { const tr = nav.parentElement.querySelector(".track"); tr.scrollBy({ left: (nav.classList.contains("next") ? 1 : -1) * tr.clientWidth * 0.9, behavior: "smooth" }); return; }
+    if (nav) return pageTrack(nav.parentElement.querySelector(".track"), nav.classList.contains("next") ? 1 : -1);
     const th = t.closest("#file-table th[data-k]");
     if (th) { const k = th.dataset.k; state.tsort = { k, dir: state.tsort.k === k ? -state.tsort.dir : (k === "name" || k === "cat" ? 1 : -1) }; return render(); }
     const bulk = t.closest("[data-bulk]");
@@ -1077,6 +1123,7 @@ if (DATA.lanBase) { const lb = $("#lan-btn"); lb.href = DATA.lanBase; lb.innerHT
 if (!["browse", "grid", "table"].includes(state.view)) state.view = "browse";
 player.init();
 hoverInit();
+dragInit();
 peopleInit();
 const fromHash = /^#c\/(.+)$/.exec(location.hash);
 if (fromHash) { state.cat = decodeURIComponent(fromHash[1]); state.view = "grid"; }
