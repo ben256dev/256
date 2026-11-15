@@ -18,7 +18,6 @@ const HOST = "0.0.0.0";
 const FINGERPRINT_CMD = process.env.FINGERPRINT_CMD;
 const BODY_FILE = path.join(__dirname, "views", "body_table.html");
 const CATEGORIES_FILE = process.env.CATEGORIES_FILE || path.join(__dirname, "categories.json");
-const CSS_URL = process.env.DARKMODE_CSS || "https://ben256.com/darkmode.css";
 const OWNER_EMAILS = (process.env.OWNER_EMAILS || process.env.OWNER_EMAIL || "benjamin@ben256.com")
     .split(",")
     .map((email) => email.trim().toLowerCase())
@@ -293,21 +292,6 @@ const clientItem = (it, basePath) => {
     return out;
 };
 
-const fetchTemplate = (url) =>
-    new Promise((resolve, reject) => {
-        https.get(url, (res) => {
-            if (res.statusCode !== 200) {
-                reject(new Error(`Failed to fetch template: ${res.statusCode}`));
-                res.resume();
-                return;
-            }
-            let data = "";
-            res.setEncoding("utf8");
-            res.on("data", (chunk) => (data += chunk));
-            res.on("end", () => resolve(data));
-        }).on("error", reject);
-    });
-
 const fetchJSON = (url, headers = {}) =>
     new Promise((resolve, reject) => {
         https.get(url, { headers }, (res) => {
@@ -437,7 +421,8 @@ const viewerGuard = async (req, res, next) => {
     deny(req, res, a.user, false);
 };
 
-const fallbackTemplate = `<!doctype html>
+// Page shell. (This used to be fetched from ben256.com on every request; that file is gone.)
+const pageTemplate = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -451,40 +436,23 @@ body { font: 15px/1.45 Arial, Helvetica, sans-serif; }
 main { width: min(1500px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; }
 a { color: var(--link); }
 button, input { font: inherit; }
-footer { color: var(--muted); }
 </style>
-$if(css)$
-<link rel="stylesheet" href="$css$">
-$endif$
 </head>
 <body>
 <main>
 $body$
 </main>
-<footer>$footer-content$</footer>
 </body>
 </html>`;
 
 // Function replacers so "$&", "$'" etc. in file names or page content are inserted literally.
 const lit = (s) => () => s || "";
 
-const renderWithTemplate = async (bodyHtml, title, cssUrl, footerHtml, baseHref) => {
-    let tpl;
-    try {
-        tpl = await fetchTemplate("https://www.ben256.com/template.html");
-    } catch (err) {
-        console.warn("template fetch failed; using fallback:", err.message);
-        tpl = fallbackTemplate;
-    }
-    const ifCssRe = /\$if\(css\)\$[\s\S]*?\$endif\$/g;
-    let out = tpl.replace(ifCssRe, lit(`<link rel="stylesheet" href="${cssUrl}">`))
+const renderPage = (bodyHtml, title, baseHref) =>
+    pageTemplate
+        .replace(/<head>/i, lit(`<head><base href="${baseHref || "/"}">`))
         .replace(/\$title\$/g, lit(title))
-        .replace(/\$css\$/g, lit(cssUrl))
-        .replace(/\$body\$/g, lit(bodyHtml))
-        .replace(/\$footer-content\$/g, lit(footerHtml));
-    out = out.replace(/<head>/i, lit(`<head><base href="${baseHref || "/"}">`));
-    return out;
-};
+        .replace(/\$body\$/g, lit(bodyHtml));
 
 const renderIndex = async (req, res, basePath, role) => {
     const isOwner = role === "owner";
@@ -517,7 +485,7 @@ const renderIndex = async (req, res, basePath, role) => {
             .replace("%%DATA%%", lit(json))
             .replace(/%%SHARE_URL%%/g, lit(htmlEsc(role === "viewer" ? "" : shareUrl)))
             .replace(/%%OWNER_CLASS%%/g, lit(isOwner ? "is-owner" : role === "viewer" ? "is-viewer" : "is-public"));
-        const page = await renderWithTemplate(bodyHtml, "OBS Files", CSS_URL, "", basePath);
+        const page = renderPage(bodyHtml, "OBS Files", basePath);
         res.type("html").send(page);
     } catch (err) {
         console.error("index error:", err);
@@ -618,6 +586,16 @@ const categoryDest = (rel, cat) => {
     return parts.length === 1 ? `${cat}/${name}` : [cat, ...parts.slice(1)].join("/");
 };
 
+// Give each successful move the recording's fresh client item (new paths, art URLs, category), so
+// the page can patch itself instead of reloading. Owner pages are always served from "/".
+const attachItems = async (results) => {
+    const stems = new Set(results.filter((r) => r.from && !r.error && !r.skipped).map((r) => r.stem));
+    if (!stems.size) return;
+    const files = (await walkFiles(root)).filter((rel) => stems.has(stemOf(rel)));
+    const byStem = new Map((await buildItems(files)).map((it) => [it.stem, clientItem(it, "/")]));
+    for (const r of results) if (byStem.has(r.stem) && r.from) r.item = byStem.get(r.stem);
+};
+
 app.post("/__api/cleanup", ownerGuard, express.json({ limit: "64kb" }), async (req, res) => {
     const body = req.body || {};
     const action = body.action;
@@ -641,6 +619,7 @@ app.post("/__api/cleanup", ownerGuard, express.json({ limit: "64kb" }), async (r
     } catch (err) {
         console.error("saving meta failed:", err);
     }
+    await attachItems(results);
     const failed = results.filter((r) => r.error);
     res.status(failed.length === results.length ? 409 : 200).json({ results });
 });
@@ -678,6 +657,7 @@ app.post("/__api/move", ownerGuard, express.json({ limit: "64kb" }), async (req,
     } catch (err) {
         console.error("saving meta failed:", err);
     }
+    await attachItems(results);
     const failed = results.filter((r) => r.error);
     res.status(failed.length === results.length ? 409 : 200).json({ results });
 });

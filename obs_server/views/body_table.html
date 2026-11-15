@@ -420,15 +420,18 @@ const titleOf = (it) => {
 };
 const CLEANUP = DATA.cleanupCat || "_cleanup";
 if (!CATS[CLEANUP]) CATS[CLEANUP] = { title: "Marked for cleanup" };
-ITEMS.forEach((it, i) => {
+const decorate = (it, i) => {
     it.i = i;
     it.title = titleOf(it);
     it.homeCat = it.cleanup ? it.origCat : it.cat; // category it came from, for display
     it.catTitle = catInfo(it.homeCat).title;
     it.dated = OBS_NAME.test(stemName(it.name));
-});
-const LIVE = ITEMS.filter((it) => !it.cleanup);
-const TRASH = ITEMS.filter((it) => it.cleanup);
+    return it;
+};
+ITEMS.forEach(decorate);
+let LIVE, TRASH;
+const split = () => { LIVE = ITEMS.filter((it) => !it.cleanup); TRASH = ITEMS.filter((it) => it.cleanup); };
+split();
 
 // ---- Watch progress (per viewer, best-effort) -------------------------------------------------
 const store = {
@@ -625,7 +628,9 @@ const renderBrowse = () => {
             <button class="see-all" type="button" data-cat-open="${esc(CLEANUP)}">See all ${svg("right")}</button>`, [...TRASH].sort(SORTS.new), true)
             .replace('class="row"', 'class="row trash-row"'));
     }
+    const keep = new Map([...document.querySelectorAll("#browse .row")].map((r) => [r.dataset.row, r.querySelector(".track").scrollLeft]));
     $("#browse").innerHTML = out.join("") || `<div class="empty">Nothing recorded yet.</div>`;
+    document.querySelectorAll("#browse .row").forEach((r) => { if (keep.get(r.dataset.row)) r.querySelector(".track").scrollLeft = keep.get(r.dataset.row); });
     document.querySelectorAll(".row-view").forEach(updateNav);
 };
 const updateNav = (view) => {
@@ -703,12 +708,33 @@ const cleanupAction = async (stems, action) => {
         });
         const j = await r.json().catch(() => ({}));
         const failed = (j.results || []).filter((x) => x.error);
+        applyMoves(j.results || []);
         if (failed.length) alert(`${failed.length} of ${stems.length} could not be ${action === "mark" ? "marked" : "restored"}:\n` + failed.map((f) => `${f.stem}: ${f.error}`).join("\n"));
         else if (!r.ok) alert(`Failed: HTTP ${r.status}`);
     } catch (e) {
         alert(`Failed: ${e.message}`);
     }
-    location.reload();
+};
+// Swap moved recordings for the server's updated copies and redraw, keeping scroll positions.
+// Watch progress is keyed by URL, so it follows the file to its new path.
+const applyMoves = (results) => {
+    // An older server doesn't send items back; fall back to a full reload so the page isn't stale.
+    if (results.some((r) => r.from && !r.error && !r.skipped && !r.item)) return location.reload();
+    let changed = false;
+    for (const r of results) {
+        if (!r.item) continue;
+        const idx = ITEMS.findIndex((x) => x.stem === r.from);
+        if (idx < 0) continue;
+        const old = ITEMS[idx], it = decorate(r.item, idx);
+        if (progress[old.href] && old.href !== it.href) { progress[it.href] = progress[old.href]; delete progress[old.href]; }
+        if (selected.delete(old.stem)) selected.add(it.stem);
+        ITEMS[idx] = it;
+        changed = true;
+    }
+    if (!changed) return;
+    store.set("obs-progress", progress);
+    split();
+    if (!player.item) render();
 };
 
 // ---- Move between categories (owner only): moves the files into another top-level folder ---------
@@ -733,12 +759,12 @@ const moveAction = async (stems, cat) => {
         });
         const j = await r.json().catch(() => ({}));
         const failed = (j.results || []).filter((x) => x.error);
+        applyMoves(j.results || []);
         if (failed.length) alert(`${failed.length} of ${stems.length} could not be moved:\n` + failed.map((f) => `${f.stem}: ${f.error}`).join("\n"));
         else if (!r.ok) alert(`Move failed: HTTP ${r.status}`);
     } catch (e) {
         alert(`Move failed: ${e.message}`);
     }
-    location.reload();
 };
 const moveDialog = (list) => {
     list = list.filter((it) => !it.cleanup);
