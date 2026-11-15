@@ -3,6 +3,7 @@ const { execFileSync } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const fsp = fs.promises;
+const os = require("os");
 const path = require("path");
 const https = require("https");
 const express = require("express");
@@ -29,6 +30,9 @@ const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
 // relative path, so backups can exclude one directory and restoring is exact.
 const CLEANUP_DIR = (process.env.CLEANUP_DIR || "_cleanup").replace(/[\\/.]/g, "") || "_cleanup";
 const AUTO_REMUX = process.env.AUTO_REMUX !== "0";
+// Direct LAN address of this machine (e.g. "http://192.168.0.91:3923"), so the owner can skip the
+// Cloudflare round trip on the home network. Auto-detected when unset; "0" turns the feature off.
+const LAN_URL = (process.env.LAN_URL || "").replace(/\/+$/, "");
 
 if (!FINGERPRINT_CMD) {
     console.error("FINGERPRINT_CMD not set in environment");
@@ -132,6 +136,19 @@ const hasFile = async (absPath) => {
     } catch {
         return false;
     }
+};
+
+// First private IPv4 on a physical-looking interface (skips loopback and docker/bridge/veth/vpn).
+const lanAddress = () => {
+    if (LAN_URL === "0") return "";
+    if (LAN_URL) return LAN_URL;
+    const privateIp = (ip) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
+    for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+        if (/^(lo|docker|br-|veth|virbr|tun|tap|wg|tailscale|zt)/.test(name)) continue;
+        const a = (addrs || []).find((x) => x.family === "IPv4" && !x.internal && privateIp(x.address));
+        if (a) return `http://${a.address}:${PORT}`;
+    }
+    return "";
 };
 
 const encodeRel = (rel) => Buffer.from(rel, "utf8").toString("base64url");
@@ -491,6 +508,9 @@ const renderIndex = async (req, res, basePath, role) => {
         // Viewers get links to the sign-in-protected site, so they can't pass the private key on.
         data.shareBase = role === "viewer" ? `${PUBLIC_BASE_URL || requestOrigin(req)}/` : shareUrl;
         data.basePath = basePath;
+        // LAN links carry the private key, so only the owner ever sees them.
+        const lan = isOwner ? lanAddress() : "";
+        if (lan) data.lanBase = `${lan}${staticMount}`;
         // JSON inside <script>: escape "<" so a file name can never close the tag.
         const json = JSON.stringify(data).replace(/</g, "\\u003c");
         const bodyHtml = bodyTpl
@@ -525,14 +545,13 @@ app.post("/__api/title", ownerGuard, express.json({ limit: "4kb" }), async (req,
     res.json({ stem, title });
 });
 
-// Mark recordings for cleanup (move every file of the recording under CLEANUP_DIR/) or restore them.
-// Nothing is deleted here; deletion/backup policy is left to whatever reads the cleanup folder.
-const moveGroup = async (files, stem, toCleanup) => {
-    if (toCleanup === inCleanup(stem)) return { stem, skipped: true };
+// Move every file of one recording (mkv + mp4 + sidecars share a stem) with dest(rel) -> new rel.
+// All-or-nothing: on any failure the files already moved are put back. Titles and generated art
+// follow the recording so nothing has to be renamed or re-rendered.
+const relocate = async (files, stem, dest) => {
     if (media.status(stem)) throw Object.assign(new Error("still converting"), { code: 409 });
     const group = files.filter((rel) => stemOf(rel) === stem);
     if (!group.length) throw Object.assign(new Error("not found"), { code: 404 });
-    const dest = (rel) => (toCleanup ? `${CLEANUP_DIR}/${rel}` : originalRel(rel));
     for (const rel of group) {
         const target = safeRelPath(dest(rel));
         if (!target) throw Object.assign(new Error("bad path"), { code: 400 });
@@ -556,19 +575,47 @@ const moveGroup = async (files, stem, toCleanup) => {
         meta.titles[newStem] = meta.titles[stem];
         delete meta.titles[stem];
     }
+    for (const artPath of [media.posterPath, media.spritePath, media.wavePath]) {
+        await fsp.rename(artPath(stem), artPath(newStem)).catch(() => {});
+    }
+    return { newStem, count: group.length };
+};
+
+// Remove folders a move left empty, walking up from dir but never past (or including) stopAt.
+const pruneEmptyDirs = async (dir, stopAt) => {
+    while (dir.startsWith(stopAt + path.sep)) {
+        if (!(await fsp.rmdir(dir).then(() => true, () => false))) break;
+        dir = path.dirname(dir);
+    }
+};
+
+// Mark recordings for cleanup (move every file of the recording under CLEANUP_DIR/) or restore them.
+// Nothing is deleted here; deletion/backup policy is left to whatever reads the cleanup folder.
+const moveGroup = async (files, stem, toCleanup) => {
+    if (toCleanup === inCleanup(stem)) return { stem, skipped: true };
+    const dest = (rel) => (toCleanup ? `${CLEANUP_DIR}/${rel}` : originalRel(rel));
+    const { newStem, count } = await relocate(files, stem, dest);
     if (toCleanup) meta.cleanup[newStem] = { at: Date.now(), from: stem };
     else delete meta.cleanup[stem];
     // Drop now-empty folders left behind under the cleanup dir after a restore.
-    if (!toCleanup) {
-        let dir = path.dirname(path.join(root, stem));
-        const top = path.join(root, CLEANUP_DIR);
-        while (dir.startsWith(top + path.sep)) {
-            if (!(await fsp.rmdir(dir).then(() => true, () => false))) break;
-            dir = path.dirname(dir);
-        }
-    }
-    console.log(`[cleanup] ${toCleanup ? "marked" : "restored"}: ${stem} -> ${newStem} (${group.length} file${group.length === 1 ? "" : "s"})`);
+    if (!toCleanup) await pruneEmptyDirs(path.dirname(path.join(root, stem)), path.join(root, CLEANUP_DIR));
+    console.log(`[cleanup] ${toCleanup ? "marked" : "restored"}: ${stem} -> ${newStem} (${count} file${count === 1 ? "" : "s"})`);
     return { stem: newStem };
+};
+
+// Category = top-level folder; "Uncategorized" = loose files in the root.
+const UNCATEGORIZED = "Uncategorized";
+const validCategory = (cat) =>
+    cat === UNCATEGORIZED || (/^[A-Za-z0-9][A-Za-z0-9 _&'()+,-]{0,63}$/.test(cat) && cat !== CLEANUP_DIR && cat.trim() === cat);
+
+// Source folders are left in place even when emptied: OBS may be recording into one.
+// Moving keeps any sub-folders below the category (school/cs101/x.mp4 -> movies/cs101/x.mp4);
+// moving to Uncategorized puts the file straight into the root.
+const categoryDest = (rel, cat) => {
+    const parts = rel.split("/");
+    const name = parts[parts.length - 1];
+    if (cat === UNCATEGORIZED) return name;
+    return parts.length === 1 ? `${cat}/${name}` : [cat, ...parts.slice(1)].join("/");
 };
 
 app.post("/__api/cleanup", ownerGuard, express.json({ limit: "64kb" }), async (req, res) => {
@@ -585,6 +632,43 @@ app.post("/__api/cleanup", ownerGuard, express.json({ limit: "64kb" }), async (r
         }
         try {
             results.push({ from: stem, ...(await moveGroup(files, stem, action === "mark")) });
+        } catch (err) {
+            results.push({ stem, error: err.message });
+        }
+    }
+    try {
+        await saveMeta();
+    } catch (err) {
+        console.error("saving meta failed:", err);
+    }
+    const failed = results.filter((r) => r.error);
+    res.status(failed.length === results.length ? 409 : 200).json({ results });
+});
+
+app.post("/__api/move", ownerGuard, express.json({ limit: "64kb" }), async (req, res) => {
+    const body = req.body || {};
+    const cat = String(body.cat || "").trim();
+    const stems = Array.isArray(body.stems) ? body.stems.map(String).slice(0, 500) : [];
+    if (!validCategory(cat) || !stems.length) return res.status(400).json({ error: "bad request" });
+    const files = await walkFiles(root);
+    const results = [];
+    for (const stem of stems) {
+        if (!safeRelPath(stem)) {
+            results.push({ stem, error: "bad path" });
+            continue;
+        }
+        if (inCleanup(stem)) {
+            results.push({ stem, error: "restore it from cleanup first" });
+            continue;
+        }
+        if (categorize(stem) === cat) {
+            results.push({ from: stem, stem, skipped: true });
+            continue;
+        }
+        try {
+            const { newStem, count } = await relocate(files, stem, (rel) => categoryDest(rel, cat));
+            console.log(`[move] ${stem} -> ${newStem} (${count} file${count === 1 ? "" : "s"})`);
+            results.push({ from: stem, stem: newStem });
         } catch (err) {
             results.push({ stem, error: err.message });
         }
@@ -798,7 +882,10 @@ const staticOpts = {
         const t = MIME_MAP[ext];
         if (t) res.setHeader("Content-Type", t);
         res.setHeader("Accept-Ranges", "bytes");
-        res.setHeader("Content-Disposition", "inline");
+        // ?dl=1 forces a save instead of playing in the browser (the download attribute is ignored
+        // for the cross-origin LAN links).
+        const dl = res.req && res.req.query && res.req.query.dl;
+        res.setHeader("Content-Disposition", dl ? `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(filePath))}` : "inline");
     }
 };
 

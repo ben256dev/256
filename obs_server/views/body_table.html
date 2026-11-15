@@ -16,6 +16,7 @@
             <button type="button" data-view="table">Table</button>
         </div>
         <button id="people-btn" class="icon-btn" type="button" hidden aria-label="People &amp; invites" title="People &amp; invites"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
+        <a id="lan-btn" class="btn ghost" hidden target="_blank" rel="noopener" title="Open the library straight from the server over your home network. Much faster downloads, but only works at home.">LAN</a>
         <button id="share-link" class="btn ghost" type="button" data-share-url="%%SHARE_URL%%">Share</button>
     </div>
 </header>
@@ -85,6 +86,16 @@
             <button type="submit" class="btn primary">Save</button>
         </div>
     </form>
+</dialog>
+<dialog id="move-dialog" aria-labelledby="move-title">
+    <div class="dlg-head"><h2 id="move-title">Move to</h2><button type="button" class="icon-btn" data-move="close" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+    <p class="hint" id="move-sub"></p>
+    <div class="move-list" id="move-list" role="listbox" aria-label="Categories"></div>
+    <form id="move-new" class="invite-row">
+        <input id="move-new-name" maxlength="64" placeholder="New category" autocomplete="off" aria-label="New category name">
+        <button class="btn primary" type="submit">Move</button>
+    </form>
+    <p class="hint">Moves the files on disk into that category's folder.</p>
 </dialog>
 <dialog id="people-dialog" aria-labelledby="people-title">
     <div class="dlg-head"><h2 id="people-title">People</h2><button type="button" class="icon-btn" data-people="close" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
@@ -291,6 +302,16 @@
 .dlg-actions span { flex: 1 }
 #obs .dlg-actions .btn.primary, #rename-dialog .btn.primary { background: #fff; color: #000 }
 .is-viewer #share-link { display: none }
+#move-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #1f1f1f; color: var(--text) }
+#move-dialog::backdrop { background: rgba(0,0,0,.6) }
+#move-dialog .hint { color: var(--muted); font-size: .82rem; margin: 4px 0 12px }
+#move-dialog .btn.primary { background: #fff; color: #000 }
+.move-list { display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; margin: 0 -6px 12px; padding: 0 6px }
+.move-list button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px; padding: 6px 10px; border: 0; border-radius: 8px; background: none; text-align: left; cursor: pointer; font-weight: 600 }
+.move-list button:hover, .move-list button:focus-visible { background: rgba(255,255,255,.1); outline: none }
+.move-list button[disabled] { cursor: default; opacity: .5; background: none }
+.move-list .n { margin-left: auto; color: var(--muted); font-weight: 400; font-size: .85rem }
+.move-list .no-ico { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; background: var(--panel2); color: var(--muted); font-size: 12px }
 #people-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #1f1f1f; color: var(--text) }
 #people-dialog::backdrop { background: rgba(0,0,0,.6) }
 .dlg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px }
@@ -352,6 +373,8 @@ const ICONS = {
     link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
     external: '<path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
     check: '<path d="M20 6L9 17l-5-5"/>',
+    lan: '<rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="16" width="7" height="5" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/><path d="M6.5 8v8M6.5 12h11v4"/>',
+    folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5L12 16l2.5-2.5"/>',
     x: '<path d="M18 6L6 18M6 6l12 12"/>'
 };
 const svg = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
@@ -614,6 +637,7 @@ const updateBulk = () => {
     $("#bulk-count").textContent = `${n} selected`;
     const picked = ITEMS.filter((it) => selected.has(it.stem));
     $(".bulk-actions").innerHTML = [
+        picked.some((it) => !it.cleanup) ? iconBtn("folder", "Move selected to…", 'data-bulk="move"') : "",
         picked.some((it) => !it.cleanup) ? iconBtn("trash", "Mark selected for cleanup", 'data-bulk="mark"', "danger") : "",
         picked.some((it) => it.cleanup) ? iconBtn("restore", "Restore selected", 'data-bulk="restore"') : "",
         iconBtn("x", "Clear selection", 'data-bulk="clear"')
@@ -639,6 +663,69 @@ const cleanupAction = async (stems, action) => {
         alert(`Failed: ${e.message}`);
     }
     location.reload();
+};
+
+// ---- Move between categories (owner only): moves the files into another top-level folder ---------
+const UNCAT = "Uncategorized";
+// "Supermarket Together" -> "supermarket_together", matching the existing folder naming.
+const folderName = (title) => title.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_&'()+,-]/g, "").replace(/^[^a-z0-9]+/, "").slice(0, 64);
+const moveTargets = () => {
+    const counts = new Map();
+    for (const it of LIVE) counts.set(it.cat, (counts.get(it.cat) || 0) + 1);
+    const cats = new Set([...Object.keys(CATS), ...counts.keys(), UNCAT]);
+    cats.delete(CLEANUP);
+    return [...cats].map((c) => ({ cat: c, n: counts.get(c) || 0, title: catInfo(c).title }))
+        .sort((a, b) => (a.cat === UNCAT) - (b.cat === UNCAT) || a.title.localeCompare(b.title));
+};
+const moveAction = async (stems, cat) => {
+    if (!stems.length || !cat) return;
+    try {
+        const r = await fetch("/__api/move", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stems, cat })
+        });
+        const j = await r.json().catch(() => ({}));
+        const failed = (j.results || []).filter((x) => x.error);
+        if (failed.length) alert(`${failed.length} of ${stems.length} could not be moved:\n` + failed.map((f) => `${f.stem}: ${f.error}`).join("\n"));
+        else if (!r.ok) alert(`Move failed: HTTP ${r.status}`);
+    } catch (e) {
+        alert(`Move failed: ${e.message}`);
+    }
+    location.reload();
+};
+const moveDialog = (list) => {
+    list = list.filter((it) => !it.cleanup);
+    if (!IS_OWNER || !list.length) return;
+    const dlg = $("#move-dialog");
+    const cur = new Set(list.map((it) => it.cat));
+    const only = cur.size === 1 ? [...cur][0] : null;
+    $("#move-sub").textContent = list.length === 1 ? list[0].title : `${list.length} items`;
+    $("#move-list").innerHTML = moveTargets().map((t) => `<button type="button" role="option" data-move-to="${esc(t.cat)}" ${t.cat === only ? 'disabled aria-selected="true"' : ""}>
+        ${catIco(t.cat, "sm") || `<span class="no-ico">${svg("folder")}</span>`}<span>${esc(t.title)}</span>
+        <span class="n">${t.cat === only ? "current" : t.n || ""}</span></button>`).join("");
+    const go = (cat) => { dlg.close(); player.close(); moveAction(list.map((it) => it.stem), cat); };
+    dlg.onclick = (e) => {
+        if (e.target === dlg || e.target.closest('[data-move="close"]')) return dlg.close();
+        const b = e.target.closest("[data-move-to]");
+        if (b && !b.disabled) go(b.dataset.moveTo);
+    };
+    $("#move-new-name").value = "";
+    $("#move-new").onsubmit = (e) => {
+        e.preventDefault();
+        const raw = $("#move-new-name").value.trim();
+        if (!raw) return;
+        // Typing an existing category's title (or folder name) reuses it instead of making a twin.
+        const hit = moveTargets().find((t) => t.title.toLowerCase() === raw.toLowerCase() || t.cat.toLowerCase() === raw.toLowerCase());
+        const cat = hit ? hit.cat : folderName(raw);
+        if (!cat) return alert("Use letters or numbers in the category name.");
+        if (cat === CLEANUP.toLowerCase()) return alert("That name is reserved.");
+        if (cat === only) return dlg.close();
+        go(cat);
+    };
+    dlg.showModal();
+    const first = $("#move-list button:not([disabled])");
+    if (first) first.focus();
 };
 
 const render = () => {
@@ -725,6 +812,13 @@ const shareLink = (it) => {
     const rel = it.href.startsWith(base) ? it.href.slice(base.length) : it.href.replace(/^\//, "");
     return (DATA.shareBase || location.origin + "/") + rel;
 };
+// Same file, fetched straight from the server on the home network instead of via Cloudflare.
+const lanLink = (it, href = it.href, dl = true) => {
+    if (!DATA.lanBase) return "";
+    const base = DATA.basePath || "/";
+    const rel = href.startsWith(base) ? href.slice(base.length) : href.replace(/^\//, "");
+    return DATA.lanBase + rel + (dl ? "?dl=1" : "");
+};
 const copyLink = async (it, btn) => {
     const url = shareLink(it);
     try { await navigator.clipboard.writeText(url); } catch { prompt("Link", url); return; }
@@ -734,6 +828,7 @@ const runAction = (action, it, btn) => {
     if (action === "play") return player.open(it);
     if (action === "rename") return renameDialog(it);
     if (action === "copy") return copyLink(it, btn);
+    if (action === "move") return moveDialog([it]);
     if (action === "cleanup") { player.close(); return cleanupAction([it.stem], it.cleanup ? "restore" : "mark"); }
 };
 
@@ -743,8 +838,10 @@ const renderPlayerActions = () => {
     const dl = files(it).map((f) => `<a class="icon-btn" href="${esc(f.href)}" download aria-label="Download .${esc(f.ext)}" title="Download .${esc(f.ext)}">${svg("download")}</a>`);
     $("#player-actions").innerHTML = [
         IS_OWNER ? iconBtn("pencil", "Rename", 'data-act="rename"') : "",
+        IS_OWNER && !it.cleanup ? iconBtn("folder", "Move to…", 'data-act="move"') : "",
         iconBtn("link", "Copy link", 'data-act="copy"'),
         dl[0] || "",
+        lanLink(it) ? `<a class="icon-btn" href="${esc(lanLink(it))}" aria-label="Download over LAN" title="Download over LAN (home network only)">${svg("lan")}</a>` : "",
         IS_OWNER ? (it.cleanup ? iconBtn("restore", "Restore from cleanup", 'data-act="cleanup"') : iconBtn("trash", "Mark for cleanup", 'data-act="cleanup"', "danger")) : "",
         iconBtn("x", "Close", 'data-act="close"')
     ].join("");
@@ -771,7 +868,9 @@ const openMenu = (btn) => {
     m.innerHTML = [
         it.kind !== "file" ? entry("play", "Play", "play") : "",
         IS_OWNER ? entry("pencil", "Rename", "rename") : "",
+        IS_OWNER && !it.cleanup ? entry("folder", "Move to…", "move", "", it.catTitle) : "",
         ...fs.map((f, n) => `<a role="menuitem" href="${esc(f.href)}" download>${svg("download")}<span>Download${fs.length > 1 ? ` .${esc(f.ext)}` : ""}</span>${n === 0 ? `<span class="menu-sub">${fmtBytes(it.size)}</span>` : ""}</a>`),
+        ...(DATA.lanBase ? fs.map((f) => `<a role="menuitem" href="${esc(lanLink(it, f.href))}">${svg("lan")}<span>Download over LAN${fs.length > 1 ? ` .${esc(f.ext)}` : ""}</span><span class="menu-sub">home only</span></a>`) : []),
         entry("link", "Copy link", "copy"),
         `<a role="menuitem" href="${esc(it.href)}" target="_blank" rel="noopener">${svg("external")}<span>Open in new tab</span></a>`,
         IS_OWNER ? "<hr>" + (it.cleanup ? entry("restore", "Restore from cleanup", "cleanup") : entry("trash", "Mark for cleanup", "cleanup", "danger")) : ""
@@ -931,6 +1030,7 @@ document.addEventListener("click", (e) => {
     if (bulk) {
         const a = bulk.dataset.bulk;
         if (a === "clear") { selected.clear(); return render(); }
+        if (a === "move") return moveDialog(ITEMS.filter((it) => selected.has(it.stem)));
         return cleanupAction([...selected], a);
     }
     if (t.closest("a, .sel")) return;
@@ -973,6 +1073,7 @@ share.addEventListener("click", async () => {
     } catch { prompt("Share link", share.dataset.shareUrl); }
 });
 
+if (DATA.lanBase) { const lb = $("#lan-btn"); lb.href = DATA.lanBase; lb.innerHTML = `${svg("lan")} LAN`; lb.hidden = false; }
 if (!["browse", "grid", "table"].includes(state.view)) state.view = "browse";
 player.init();
 hoverInit();
